@@ -1,0 +1,53 @@
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import 
+CORSMiddleware
+from fastapi.responses import 
+FileResponse
+import edge_tts
+import os
+
+# 1. Initialize FastAPI
+app = FastAPI()
+
+# 2. Allow the browser to talk to 
+Python (CORS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_methods=["*"], 
+    allow_headers=["*"],
+)
+
+# Create a folder to save our audio 
+files
+os.makedirs("static", exist_ok=True)
+
+# 3. The Endpoint: The website will 
+send text here
+@app.post("/speak")
+async def speak_text(text: str):
+    print(f"🧠 Python received: 
+{text}")
+    
+    # Generate the voice using 
+edge-tts
+    communicate = 
+edge_tts.Communicate(text, 
+"en-US-AriaNeural")
+    await 
+communicate.save("static/avatar_reply.mp3")
+    
+    print("✅ Audio generated! 
+Sending URL back to browser...")
+    return {"audio_url": 
+"http://localhost:8000/audio"}
+
+# 4. The Endpoint: The browser will 
+go here to download the actual audio 
+file
+@app.get("/audio")
+async def get_audio():
+    return 
+FileResponse("static/avatar_reply.mp3", 
+media_type="audio/mpeg")

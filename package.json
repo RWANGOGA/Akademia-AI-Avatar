@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.3",
+    "three": "^0.184.0"
+  }
+}
