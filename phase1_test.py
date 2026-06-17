@@ -7,7 +7,7 @@ from openai import OpenAI
 # 1. SETUP API KEYS
 # ==========================================
 # We only need OpenAI now! ElevenLabs is removed.
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ==========================================

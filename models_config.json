@@ -1,0 +1,40 @@
+{
+  "available_models": [
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o (OpenAI - Best Quality)",
+      "provider": "openai"
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o Mini (OpenAI - Fast & Cheap)",
+      "provider": "openai"
+    },
+    {
+      "id": "openai/gpt-3.5-turbo",
+      "name": "GPT-3.5 Turbo (OpenAI - Legacy)",
+      "provider": "openai"
+    },
+    {
+      "id": "nvidia/meta/llama-3.1-70b-instruct",
+      "name": "Llama 3.1 70B (NVIDIA - Open Source)",
+      "provider": "nvidia"
+    },
+    {
+      "id": "nvidia/meta/llama-3.1-405b-instruct",
+      "name": "Llama 3.1 405B (NVIDIA - Massive)",
+      "provider": "nvidia"
+    },
+    {
+      "id": "nvidia/mistralai/mixtral-8x7b-instruct-v0.1",
+      "name": "Mixtral 8x7B (NVIDIA - Fast)",
+      "provider": "nvidia"
+    },
+    {
+      "id": "nvidia/google/gemma-7b",
+      "name": "Gemma 7B (NVIDIA - Google)",
+      "provider": "nvidia"
+    }
+  ],
+  "default_model": "nvidia/meta/llama-3.1-70b-instruct"
+}

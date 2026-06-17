@@ -6,13 +6,19 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 // 1. SCENE, CAMERA, RENDERER, LIGHTING
 // ==========================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf0f0f0);
+// No scene.background so the CSS gradients show through!
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
 camera.position.set(0, 1.3, 3); 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
+// alpha: true makes the 3D canvas transparent
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+// Set initial size based on the left container, not the whole window
+const container = document.getElementById('canvas-container');
+renderer.setSize(container.clientWidth, container.clientHeight);
+camera.aspect = container.clientWidth / container.clientHeight;
+camera.updateProjectionMatrix();
 
 const light = new THREE.DirectionalLight(0xffffff, 1);
 light.position.set(1, 1, 1).normalize();
@@ -47,6 +53,7 @@ loader.load('/avatar.vrm', (gltf) => {
     scene.add(vrm.scene);
     currentVrm = vrm;
     document.getElementById('loading').style.display = 'none';
+    updateCharacterVisuals('Tutor'); // Apply default background on load
 });
 
 // ==========================================
@@ -91,9 +98,10 @@ function animate() {
 animate();
 
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const container = document.getElementById('canvas-container');
+  camera.aspect = container.clientWidth / container.clientHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(container.clientWidth, container.clientHeight);
 });
 
 // ==========================================
@@ -113,7 +121,6 @@ async function playAudioSequentially(url) {
         isSpeaking = true;
         source.start(0);
         
-        // --- 2D IMAGE "JAW-BOB" LIP-SYNC EFFECT ---
         const faceImg = document.getElementById('uploaded-face');
         const faceContainer = document.getElementById('face-container');
         
@@ -123,19 +130,15 @@ async function playAudioSequentially(url) {
                     faceImg.style.transform = 'scale(1) translateY(0)';
                     return;
                 }
-                
                 const freqData = new Uint8Array(analyser.frequencyBinCount);
                 analyser.getByteFrequencyData(freqData);
                 let sum = 0;
                 for (let i = 0; i < freqData.length; i++) sum += freqData[i];
                 const avg = sum / freqData.length;
                 
-                // Map audio to a "jaw drop" effect (translating Y and scaling slightly)
-                const jawDrop = (avg / 255) * 15; // Pixels to drop the jaw
+                const jawDrop = (avg / 255) * 15; 
                 const scale = 1 + (avg / 255) * 0.05; 
-                
                 faceImg.style.transform = `scale(${scale}) translateY(${jawDrop}px)`;
-                
                 requestAnimationFrame(animateFace);
             };
             animateFace();
@@ -153,38 +156,72 @@ async function playAudioSequentially(url) {
 }
 
 // ==========================================
-// 6. UI CONTROLS, PERSONAS & CHARACTER MODES
+// 🧠 LOAD AVAILABLE MODELS FROM BACKEND
 // ==========================================
-const speakBtn = document.getElementById('speakBtn');
-const userInput = document.getElementById('userInput');
-const responseArea = document.getElementById('responseArea');
-const textEn = document.getElementById('textEn');
-const textJa = document.getElementById('textJa');
-const uploadBtn = document.getElementById('uploadBtn');
-const audioFileInput = document.getElementById('audioFile');
-const personaSelect = document.getElementById('personaSelect');
-
-// Function to update the "Character" visuals based on the Persona
-function updateCharacterVisuals(persona) {
-    const aura = document.getElementById('face-aura');
-    const badge = document.getElementById('mode-badge');
-    
-    if (persona === 'Tutor') {
-        if(aura) aura.style.background = 'rgba(255, 193, 7, 0.5)'; // Warm Yellow Aura
-        if(badge) badge.innerText = '📚';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0.8); // 3D smiles gently
-    } else if (persona === 'Business') {
-        if(aura) aura.style.background = 'rgba(0, 123, 255, 0.5)'; // Sharp Blue Aura
-        if(badge) badge.innerText = '💼';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0); // 3D looks serious
-    } else { // Casual
-        if(aura) aura.style.background = 'rgba(255, 0, 128, 0.5)'; // Fun Pink Aura
-        if(badge) badge.innerText = '😎';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 1.0); // 3D smiles huge
+async function loadModels() {
+    try {
+        const response = await fetch('http://localhost:8000/models');
+        const data = await response.json();
+        
+        const modelSelect = document.getElementById('modelSelect');
+        modelSelect.innerHTML = ''; // Clear existing options
+        
+        data.models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.id;
+            option.innerText = model.name;
+            if (model.id === data.default) option.selected = true;
+            modelSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error("❌ Failed to load models:", error);
     }
 }
 
-// Listen for Persona changes to update visuals immediately
+// Call this when the page loads
+loadModels();
+
+// ==========================================
+// 6. UI CONTROLS & CHAT LOGIC
+// ==========================================
+const speakBtn = document.getElementById('speakBtn');
+const userInput = document.getElementById('userInput');
+const chatContainer = document.getElementById('chat-container'); // The scrollable chat box
+const uploadBtn = document.getElementById('uploadBtn');
+const audioFileInput = document.getElementById('audioFile');
+const personaSelect = document.getElementById('personaSelect');
+const modelSelect = document.getElementById('modelSelect');
+
+// Helper to scroll chat to the bottom
+function scrollToBottom() {
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function updateCharacterVisuals(persona) {
+    const aura = document.getElementById('face-aura');
+    const badge = document.getElementById('mode-badge');
+    const body = document.body;
+
+    body.classList.remove('bg-tutor', 'bg-business', 'bg-casual');
+
+    if (persona === 'Tutor') {
+        body.classList.add('bg-tutor');
+        if(aura) aura.style.background = 'rgba(255, 193, 7, 0.5)'; 
+        if(badge) badge.innerText = '📚';
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0.8); 
+    } else if (persona === 'Business') {
+        body.classList.add('bg-business');
+        if(aura) aura.style.background = 'rgba(0, 123, 255, 0.5)'; 
+        if(badge) badge.innerText = '💼';
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0); 
+    } else { 
+        body.classList.add('bg-casual');
+        if(aura) aura.style.background = 'rgba(255, 0, 128, 0.5)'; 
+        if(badge) badge.innerText = '😎';
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 1.0); 
+    }
+}    
+
 personaSelect.addEventListener('change', (e) => {
     updateCharacterVisuals(e.target.value);
 });
@@ -196,24 +233,43 @@ speakBtn.addEventListener('click', async () => {
     initAudioContext();
     if (audioContext.state === 'suspended') audioContext.resume();
 
+    // 1. IMMEDIATELY SHOW USER'S QUESTION ON THE RIGHT
+    const userMsg = document.createElement('div');
+    userMsg.className = 'msg-user';
+    userMsg.innerText = text;
+    chatContainer.appendChild(userMsg);
+    scrollToBottom();
+
     speakBtn.innerText = "Thinking...";
     speakBtn.disabled = true;
-    responseArea.style.display = 'none'; 
+    userInput.value = ""; // Clear input
 
     try {
+      // 👇 FIX: We define BOTH variables right here 👇
       const selectedPersona = personaSelect.value;
-      updateCharacterVisuals(selectedPersona); // Apply character mode before speaking
+      const selectedModel = modelSelect.value; 
+      // 👆 FIX 👆
+
+      updateCharacterVisuals(selectedPersona); 
 
       const response = await fetch('http://localhost:8000/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, persona: selectedPersona })
+        body: JSON.stringify({ 
+            text, 
+            persona: selectedPersona, 
+            model_id: selectedModel // Now it knows what selectedModel is!
+        })
       });
       
       const data = await response.json();
-      textEn.innerText = "🇬🇧 " + data.text_en;
-      textJa.innerText = "🇯🇵 " + data.text_ja;
-      responseArea.style.display = 'block';
+      
+      // 2. SHOW AVATAR'S ANSWER ON THE LEFT
+      const avatarMsg = document.createElement('div');
+      avatarMsg.className = 'msg-avatar';
+      avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text_en}</div><div class="text-ja">🇯🇵 ${data.text_ja}</div>`;
+      chatContainer.appendChild(avatarMsg);
+      scrollToBottom();
 
       speakBtn.innerText = "🔊 Speaking English...";
       await playAudioSequentially(data.audio_url_en); 
@@ -221,9 +277,8 @@ speakBtn.addEventListener('click', async () => {
       speakBtn.innerText = "🔊 Speaking Japanese...";
       await playAudioSequentially(data.audio_url_ja); 
       
-      speakBtn.innerText = "Ask & Speak";
+      speakBtn.innerText = "Send";
       speakBtn.disabled = false;
-      userInput.value = "";
 
     } catch (error) {
       console.error("❌ Error:", error);
@@ -262,7 +317,7 @@ imageFileInput.addEventListener('change', (event) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             document.getElementById('uploaded-face').src = e.target.result;
-            mode2dBtn.click(); // Auto-switch to 2D mode
+            mode2dBtn.click(); 
         };
         reader.readAsDataURL(file);
     }
@@ -285,6 +340,121 @@ mode2dBtn.addEventListener('click', () => {
     mode2dBtn.style.backgroundColor = '#007bff';
     mode3dBtn.style.backgroundColor = '#6c757d';
 });
+// ==========================================
+// 🌉 LIVE INTERVIEW: WEBSOCKET CLIENT
+// ==========================================
+// Connect to the backend tunnel. (We are User #1 for now)
+const ws = new WebSocket('ws://localhost:8000/interview_room/1');
 
-// Initialize default character visual on load
-updateCharacterVisuals('Tutor');
+ws.onopen = () => {
+    console.log("✅ SUCCESS: Connected to the Live Interview Room!");
+};
+
+ws.onmessage = async (event) => {
+    try {
+        // Try to parse it as JSON (AI Response)
+        const data = JSON.parse(event.data);
+        
+        if (data.type === "ai_response") {
+            console.log("🧠 AI Response Received:", data.text);
+            
+            // Create a chat bubble for the translation
+            const avatarMsg = document.createElement('div');
+            avatarMsg.className = 'msg-avatar';
+            avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text}</div>`;
+            chatContainer.appendChild(avatarMsg);
+            scrollToBottom();
+            
+            // Play the audio and trigger lip-sync!
+            await playAudioSequentially(data.audio_url);
+        }
+    } catch (e) {
+        // If it's not JSON, it's just a regular text message
+        console.log(" Received from Interview Room:", event.data);
+    }
+};
+ws.onclose = () => {
+    console.log("❌ Disconnected from Interview Room.");
+    
+    // 🛡️ FIX: If the connection drops, immediately stop the microphone to prevent spam errors
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        console.log("🛑 Microphone stopped automatically due to disconnection.");
+    }
+    
+    // Reset the button UI
+    micBtn.innerText = "🎙️ Start Interview";
+    micBtn.style.backgroundColor = "#28a745";
+};
+
+
+
+// ==========================================
+// 🎤 SPRINT 2: MICROPHONE AUDIO CHUNKING
+// ==========================================
+const micBtn = document.getElementById('micBtn');
+let mediaRecorder;
+let audioChunks = [];
+
+micBtn.addEventListener('click', async () => {
+    // If the button says "Start", begin recording
+    if (micBtn.innerText.includes('Start')) {
+        try {
+            // 1. Ask the browser for microphone access
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            audioChunks = [];
+
+            // 2. Collect the audio data as it records
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+
+            // 3. Every 4 seconds, stop and restart to create a "chunk"
+            const chunkInterval = setInterval(() => {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    mediaRecorder.start(); // Restart immediately for the next chunk
+                }
+            }, 4000); // 4000ms = 4 seconds
+
+            // 4. When a chunk stops, send it through the WebSocket!
+                        mediaRecorder.onstop = () => {
+                if (audioChunks.length > 0) {
+                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                    
+                    // 🛡️ FIX: Only send if the WebSocket is actually open!
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(blob); 
+                        console.log("🎤 Sent 4-second audio chunk to backend!");
+                    } else {
+                        console.warn("⚠️ WebSocket is closed. Dropping audio chunk.");
+                    }
+                    
+                    audioChunks = []; 
+                }
+            };
+
+            // Start the recording!
+            mediaRecorder.start();
+            micBtn.innerText = "🛑 Stop Interview";
+            micBtn.style.backgroundColor = "#dc3545"; // Turn button red
+            console.log("🎙️ Recording started. Sending chunks every 4 seconds...");
+
+        } catch (err) {
+            console.error("❌ Microphone access denied:", err);
+            alert("Please allow microphone access to start the interview.");
+        }
+        
+    } else {
+        // If the button says "Stop", end the recording
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop()); // Release the mic
+        }
+        micBtn.innerText = "🎙️ Start Interview";
+        micBtn.style.backgroundColor = "#28a745"; // Turn button green
+        console.log("🛑 Recording stopped.");
+    }
+});
