@@ -4,192 +4,131 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Akademia AI Avatar</title>
-    <style>
-      /* Base Layout: Flexbox to split screen exactly 50/50 */
-      body { 
-        margin: 0; 
-        overflow: hidden; 
-        font-family: Arial, sans-serif; 
-        display: flex;
-        height: 100vh;
-        width: 100vw;
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        transition: background 0.5s ease-in-out;
-      }
-
-      /* Persona-Specific Backgrounds */
-      body.bg-tutor { background: linear-gradient(135deg, #fff1eb 0%, #ace0f9 100%); }
-      body.bg-business { background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%); }
-      body.bg-casual { background: linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%); }
-      
-      /* LEFT SIDE: Avatar Area (50%) */
-      #canvas-container { 
-        flex: 1; 
-        height: 100vh; 
-        display: block; 
-        position: relative;
-      }
-      canvas { display: block; width: 100%; height: 100%; }
-      
-      /* 2D Face Container */
-      #face-container {
-        display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        width: 400px; height: 400px; border-radius: 50%;
-        overflow: visible; border: 8px solid #007bff; background-color: #333;
-      }
-      #face-aura {
-        position: absolute; top: -30px; left: -30px; right: -30px; bottom: -30px;
-        border-radius: 50%; background: rgba(0, 123, 255, 0.4);
-        filter: blur(25px); z-index: -1; transition: background 0.5s ease;
-      }
-      #uploaded-face {
-        width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
-        transform-origin: center top; transition: transform 0.05s linear;
-      }
-      #mode-badge {
-        position: absolute; top: 10px; right: 10px; font-size: 40px;
-        background: white; border-radius: 50%; width: 70px; height: 70px;
-        display: flex; align-items: center; justify-content: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 10; transition: all 0.3s ease;
-      }
-
-      /* Center the loading text in the left 50% panel */
-      #loading { 
-        position: absolute; top: 50%; left: 25%; 
-        transform: translate(-50%, -50%); 
-        font-size: 24px; color: #333; z-index: 100; 
-      }
-
-      /* RIGHT SIDE: Chat Panel (50%) - TRANSPARENT */
-      #chat-wrapper {
-        flex: 1; 
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
-        background: transparent; 
-        box-shadow: none; 
-        z-index: 20;
-      }
-
-      /* Scrollable Chat Messages Area */
-      #chat-container {
-        flex: 1;
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        overflow-y: auto; 
-        scroll-behavior: smooth;
-      }
-
-      /* User Message (Right Side of Chat) */
-      .msg-user {
-        align-self: flex-end;
-        background: #007bff;
-        color: white;
-        padding: 10px 14px;
-        border-radius: 15px 15px 0 15px;
-        max-width: 85%;
-        font-size: 15px;
-        line-height: 1.4;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-      }
-
-      /* Avatar Message (Left Side of Chat) - GLASSMORPHISM */
-      .msg-avatar {
-        align-self: flex-start;
-        background: rgba(255, 255, 255, 0.75); 
-        backdrop-filter: blur(10px); 
-        -webkit-backdrop-filter: blur(10px);
-        color: #333;
-        padding: 10px 14px;
-        border-radius: 15px 15px 15px 0;
-        max-width: 85%;
-        font-size: 15px;
-        line-height: 1.4;
-        border: 1px solid rgba(255, 255, 255, 0.4); 
-      }
-      .msg-avatar .text-en { font-weight: bold; margin-bottom: 6px; }
-      .msg-avatar .text-ja { color: #d32f2f; font-size: 1.1em; font-weight: 500; }
-
-      /* Controls Bar */
-      .controls-bar {
-        padding: 15px;
-        background: rgba(255, 255, 255, 0.6);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border-top: 1px solid rgba(255, 255, 255, 0.3);
-      }
-      .input-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      
-      input[type="text"], select { padding: 10px; font-size: 14px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); outline: none; background: rgba(255,255,255,0.8); }
-      input[type="text"] { flex: 1; min-width: 100px; }
-      
-      button { padding: 10px 12px; font-size: 14px; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
-      #uploadBtn { background-color: #6f42c1; }
-      #speakBtn { background-color: #007bff; }
-      #imageUploadBtn { background-color: #fd7e14; }
-      
-      /* Mode Toggle */
-      .mode-toggle {
-        position: absolute; top: 20px; right: 20px; z-index: 100;
-        background: rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        display: flex; gap: 10px; align-items: center; font-weight: bold;
-      }
-    </style>
+    <link rel="stylesheet" href="./style.css">
   </head>
   <body>
+    <!-- MODE SWITCHER (Top Center) -->
+    <div class="mode-switcher">
+        <button id="avatarModeBtn" class="mode-btn active">🤖 Avatar Chat</button>
+        <button id="liveModeBtn" class="mode-btn">📹 Live Communication</button>
+    </div>
+
     <div id="loading">Loading 3D Avatar...</div>
     
-    <!-- LEFT SIDE: Avatar Area -->
-    <div id="canvas-container"></div>
+    <!-- ========================================== -->
+    <!-- MODE 1: AVATAR CHAT (Current System) -->
+    <!-- ========================================== -->
+    <div id="avatarMode" class="mode-container active">
+        <!-- LEFT SIDE: Avatar Area -->
+        <div id="canvas-container"></div>
 
-    <!-- 2D Face with Aura and Badge -->
-    <div id="face-container">
-      <div id="face-aura"></div>
-      <img id="uploaded-face" src="" alt="User Face">
-      <div id="mode-badge">💼</div>
-    </div>
-
-    <!-- RIGHT SIDE: Chat Panel -->
-    <div id="chat-wrapper">
-      <div id="chat-container"></div>
-      
-      <div class="controls-bar">
-        <div class="input-row">
-          <select id="personaSelect" title="Persona" aria-label="Persona">
-            <option value="Tutor">👨‍🏫 Tutor</option>
-            <option value="Business">💼 Business</option>
-            <option value="Casual">😎 Casual</option>
-          </select>
-          <select id="modelSelect" title="AI Model" aria-label="AI Model">
-    <option>Loading models...</option>
-</select>
-
-          <input type="text" id="userInput" placeholder="Type here...">
-          
-          <input type="file" id="audioFile" accept="audio/*" style="display: none;">
-          <button id="uploadBtn" onclick="document.getElementById('audioFile').click()">📁</button>
-
-          <input type="file" id="imageFile" accept="image/*" style="display: none;">
-          <button id="imageUploadBtn" onclick="document.getElementById('imageFile').click()">🖼️</button>
-
-          <button id="speakBtn">Send</button>
-          <button id="micBtn" style="background-color: #28a745; padding: 10px 16px; font-size: 16px; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">🎙️ Start Interview</button>
+        <!-- 2D Face with Aura and Badge -->
+        <div id="face-container">
+            <div id="face-aura"></div>
+            <img id="uploaded-face" src="" alt="User Face">
+            <div id="mode-badge">💼</div>
         </div>
-      </div>
+
+        <!-- RIGHT SIDE: Chat Panel -->
+        <div id="chat-wrapper">
+            <div id="chat-container"></div>
+            
+            <div class="controls-bar">
+                <div class="input-row">
+                    <select id="personaSelect" title="Persona" aria-label="Persona">
+                        <option value="Tutor">👨‍🏫 Tutor</option>
+                        <option value="Business">💼 Business</option>
+                        <option value="Casual">😎 Casual</option>
+                    </select>
+
+                    <select id="modelSelect" title="AI Model" aria-label="AI Model">
+                        <option>Loading models...</option>
+                    </select>
+
+                    <input type="text" id="userInput" placeholder="Type here...">
+                    
+                    <!-- Hidden File Input for Images Only -->
+                    <input type="file" id="imageFile" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/*" class="hidden-file-input">
+                    
+                    <!-- Action Buttons -->
+                    <button type="button" id="recordBtn" title="Record Voice" class="record-btn">🎙️</button>
+                    <button type="button" id="imageUploadBtn" title="Upload Image">🖼️</button>
+                    <button type="button" id="speakBtn">Send</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="mode-toggle">
-      <span>Mode:</span>
-      <button id="mode3dBtn" style="background-color: #007bff;">3D</button>
-      <button id="mode2dBtn" style="background-color: #6c757d;">2D</button>
+    <!-- ========================================== -->
+    <!-- MODE 2: LIVE COMMUNICATION (Zoom-Style) -->
+    <!-- ========================================== -->
+    <div id="liveMode" class="mode-container">
+        <!-- LEFT SIDE: Interviewer (HR) -->
+        <div class="participant-panel">
+            <div class="participant-label">🇯 Interviewer (HR)</div>
+            <div class="video-container" id="hrVideoContainer">
+                <div class="live-badge">LIVE</div>
+                <div class="video-placeholder" id="hrPlaceholder">
+                    <div class="video-placeholder-icon">🎥</div>
+                    <div class="video-placeholder-text">Camera Off</div>
+                </div>
+                <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
+                <div class="speaking-indicator" id="hrSpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+                <div class="participant-avatar-overlay" id="hrAvatar">🤖</div>
+            </div>
+            <div class="translation-display" id="hrTranslation">
+                <div class="original-text">Waiting for speech...</div>
+                <div class="translated-text"></div>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDE: Candidate (Employee) -->
+        <div class="participant-panel">
+            <div class="participant-label">🇺 Candidate (Employee)</div>
+            <div class="video-container" id="candidateVideoContainer">
+                <div class="video-placeholder" id="candidatePlaceholder">
+                    <div class="video-placeholder-icon">👤</div>
+                    <div class="video-placeholder-text">Waiting for candidate...</div>
+                </div>
+                <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
+                <div class="speaking-indicator" id="candidateSpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+                <div class="participant-avatar-overlay" id="candidateAvatar">👨‍💼</div>
+            </div>
+            <div class="translation-display" id="candidateTranslation">
+                <div class="original-text">Waiting for speech...</div>
+                <div class="translated-text"></div>
+            </div>
+        </div>
+
+        <!-- CONTROL BAR (Bottom) -->
+        <div class="live-controls">
+            <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
+            <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
+            <button type="button" id="startTranslationBtn" class="control-btn primary">🌐 Start Live Translation</button>
+            <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Interview</button>
+            <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
+        </div>
     </div>
 
-    <!-- CRITICAL: This links your JavaScript file -->
-    <script type="module" src="/main.js"></script>
+    <!-- OLD 3D/2D TOGGLE (Only visible in Avatar Mode) -->
+    <div class="mode-toggle hidden">
+        <span>Avatar Mode:</span>
+        <button type="button" id="mode3dBtn" class="mode-toggle-btn active">3D</button>
+        <button type="button" id="mode2dBtn" class="mode-toggle-btn">2D</button>
+    </div>
+
+    <script type="module" src="/main.js"></script> 
   </body>
 </html>

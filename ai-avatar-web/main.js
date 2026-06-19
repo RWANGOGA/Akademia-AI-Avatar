@@ -1,23 +1,157 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import './style.css'; 
+import {
+    connectLiveTranslation,
+    disconnectLiveTranslation,
+    startLiveRecording,
+    stopLiveRecording,
+    isCurrentlyRecording,
+    getMyRole
+} from './liveTranslation.js';
+
+// ==========================================
+// 🔄 MODE SWITCHING LOGIC
+// ==========================================
+const avatarModeBtn = document.getElementById('avatarModeBtn');
+const liveModeBtn = document.getElementById('liveModeBtn');
+const avatarMode = document.getElementById('avatarMode');
+const liveMode = document.getElementById('liveMode');
+const oldModeToggle = document.querySelector('.mode-toggle');
+
+avatarModeBtn.addEventListener('click', () => {
+    avatarModeBtn.classList.add('active');
+    liveModeBtn.classList.remove('active');
+    avatarMode.classList.add('active');
+    liveMode.classList.remove('active');
+    if (oldModeToggle) oldModeToggle.classList.remove('hidden');
+    console.log('🤖 Switched to Avatar Chat Mode');
+});
+
+liveModeBtn.addEventListener('click', async () => {
+    liveModeBtn.classList.add('active');
+    avatarModeBtn.classList.remove('active');
+    liveMode.classList.add('active');
+    avatarMode.classList.remove('active');
+    if (oldModeToggle) oldModeToggle.classList.add('hidden');
+    console.log('📹 Switched to Live Communication Mode');
+    
+    if (!localStream) {
+        await initializeLiveMode();
+    }
+
+    connectLiveTranslation();
+});
+
+// ==========================================
+// 📹 LIVE MODE INITIALIZATION
+// ==========================================
+let localStream = null;
+let isMicMuted = false;
+let isCamOff = false;
+
+async function initializeLiveMode() {
+    try {
+        console.log('📹 Requesting camera and microphone access...');
+        
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Your browser does not support camera access.');
+        }
+        
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+        
+        const localVideo = document.getElementById('localVideo');
+        const hrPlaceholder = document.getElementById('hrPlaceholder');
+        
+        if (localVideo) {
+            localVideo.srcObject = localStream;
+            localVideo.onloadedmetadata = () => {
+                localVideo.play();
+                localVideo.style.display = 'block';
+                if (hrPlaceholder) hrPlaceholder.style.display = 'none';
+            };
+        }
+        
+        console.log('✅ Camera initialized');
+    } catch (error) {
+        console.error('❌ Camera error:', error);
+        alert('📹 Camera access denied or not available');
+    }
+}
+
+// ==========================================
+// 🎤 LIVE MODE CONTROLS
+// ==========================================
+const toggleMicBtn = document.getElementById('toggleMicBtn');
+const toggleCamBtn = document.getElementById('toggleCamBtn');
+const startTranslationBtn = document.getElementById('startTranslationBtn');
+const endCallBtn = document.getElementById('endCallBtn');
+
+toggleMicBtn.addEventListener('click', () => {
+    if (!localStream) return;
+    isMicMuted = !isMicMuted;
+    localStream.getAudioTracks().forEach(track => track.enabled = !isMicMuted);
+    toggleMicBtn.innerText = isMicMuted ? '🎤 Unmute' : '🎤 Mute';
+});
+
+toggleCamBtn.addEventListener('click', () => {
+    if (!localStream) return;
+    isCamOff = !isCamOff;
+    localStream.getVideoTracks().forEach(track => track.enabled = !isCamOff);
+    toggleCamBtn.innerText = isCamOff ? '📹 Turn On Camera' : '📹 Turn Off Camera';
+    
+    const localVideo = document.getElementById('localVideo');
+    const hrPlaceholder = document.getElementById('hrPlaceholder');
+    if (localVideo && hrPlaceholder) {
+        localVideo.style.display = isCamOff ? 'none' : 'block';
+        hrPlaceholder.style.display = isCamOff ? 'flex' : 'none';
+    }
+});
+
+startTranslationBtn.addEventListener('click', () => {
+    startTranslationBtn.innerText = '🌐 Translation Active';
+    startTranslationBtn.classList.add('active');
+    startTranslationBtn.disabled = true;
+});
+
+endCallBtn.addEventListener('click', () => {
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+    }
+    document.getElementById('localVideo').srcObject = null;
+    
+    const hrPlaceholder = document.getElementById('hrPlaceholder');
+    if (hrPlaceholder) hrPlaceholder.style.display = 'flex';
+    document.getElementById('localVideo').style.display = 'none';
+    
+    startTranslationBtn.innerText = '🌐 Start Live Translation';
+    startTranslationBtn.classList.remove('active');
+    startTranslationBtn.disabled = false;
+    
+    disconnectLiveTranslation();
+    
+    avatarModeBtn.click();
+});
 
 // ==========================================
 // 1. SCENE, CAMERA, RENDERER, LIGHTING
 // ==========================================
 const scene = new THREE.Scene();
-// No scene.background so the CSS gradients show through!
 const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
 camera.position.set(0, 1.3, 3); 
-// alpha: true makes the 3D canvas transparent
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
+
 document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-// Set initial size based on the left container, not the whole window
-const container = document.getElementById('canvas-container');
-renderer.setSize(container.clientWidth, container.clientHeight);
-camera.aspect = container.clientWidth / container.clientHeight;
+const canvasContainer = document.getElementById('canvas-container');
+renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
 camera.updateProjectionMatrix();
 
 const light = new THREE.DirectionalLight(0xffffff, 1);
@@ -29,7 +163,10 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 // 2. WEB AUDIO API SETUP
 // ==========================================
 let audioContext, analyser, dataArray;
-let isAudioSetup = false, isSpeaking = false; 
+let isAudioSetup = false, isSpeaking = false;
+let avatarMediaRecorder = null;
+let avatarAudioChunks = [];
+let isAvatarRecording = false;
 
 function initAudioContext() {
     if (isAudioSetup) return;
@@ -38,6 +175,108 @@ function initAudioContext() {
     analyser.fftSize = 32; 
     dataArray = new Uint8Array(analyser.frequencyBinCount);
     isAudioSetup = true;
+}
+
+async function submitAvatarAudio(blob) {
+    const userVoiceMsg = document.createElement('div');
+    userVoiceMsg.className = 'msg-user';
+    userVoiceMsg.innerText = '🎙️ Voice message recorded. Processing...';
+    chatContainer.appendChild(userVoiceMsg);
+    scrollToBottom();
+
+    const formData = new FormData();
+    formData.append('audio', blob, 'avatar_voice.webm');
+    formData.append('persona', personaSelect.value || 'Tutor');
+    formData.append('model_id', modelSelect.value || '');
+
+    try {
+        const response = await fetch('http://localhost:8000/ask_audio', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error);
+        }
+
+        if (data.transcribed_text) {
+            const voiceTextMsg = document.createElement('div');
+            voiceTextMsg.className = 'msg-user';
+            voiceTextMsg.innerText = `🎤 ${data.transcribed_text}`;
+            chatContainer.appendChild(voiceTextMsg);
+            scrollToBottom();
+        }
+
+        const avatarMsg = document.createElement('div');
+        avatarMsg.className = 'msg-avatar';
+        avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text_en}</div><div class="text-ja">🇯 ${data.text_ja}</div>`;
+        chatContainer.appendChild(avatarMsg);
+        scrollToBottom();
+
+        initAudioContext();
+        if (audioContext.state === 'suspended') await audioContext.resume();
+        await playAudioSequentially(data.audio_url_en);
+        await playAudioSequentially(data.audio_url_ja);
+    } catch (error) {
+        console.error('❌ Avatar audio submit failed:', error);
+        alert('Failed to process voice input.');
+    } finally {
+        recordBtn.innerText = '🎙️';
+        recordBtn.classList.remove('recording');
+    }
+}
+
+async function startAvatarRecording() {
+    if (isAvatarRecording) return;
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Your browser does not support microphone access.');
+        return;
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+        });
+
+        avatarAudioChunks = [];
+        avatarMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+
+        avatarMediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+                avatarAudioChunks.push(event.data);
+            }
+        };
+
+        avatarMediaRecorder.onstop = async () => {
+            stream.getTracks().forEach((track) => track.stop());
+            isAvatarRecording = false;
+            recordBtn.classList.remove('recording');
+            recordBtn.innerText = '🎙️';
+
+            if (avatarAudioChunks.length === 0) {
+                return;
+            }
+
+            const blob = new Blob(avatarAudioChunks, { type: 'audio/webm;codecs=opus' });
+            await submitAvatarAudio(blob);
+        };
+
+        avatarMediaRecorder.start();
+        isAvatarRecording = true;
+        recordBtn.classList.add('recording');
+        recordBtn.innerText = '⏹️ Stop';
+    } catch (error) {
+        console.error('❌ Failed to start avatar recording:', error);
+        alert('Unable to access microphone. Please allow microphone permission.');
+    }
+}
+
+function stopAvatarRecording() {
+    if (avatarMediaRecorder && isAvatarRecording) {
+        avatarMediaRecorder.stop();
+    }
 }
 
 // ==========================================
@@ -52,12 +291,12 @@ loader.load('/avatar.vrm', (gltf) => {
     VRMUtils.rotateVRM0(vrm);
     scene.add(vrm.scene);
     currentVrm = vrm;
-    document.getElementById('loading').style.display = 'none';
-    updateCharacterVisuals('Tutor'); // Apply default background on load
+    document.getElementById('loading').classList.add('hidden');
+    updateCharacterVisuals('Tutor'); 
 });
 
 // ==========================================
-// 4. ANIMATION LOOP (3D LIP-SYNC + BLINKING)
+// 4. ANIMATION LOOP
 // ==========================================
 const clock = new THREE.Clock();
 
@@ -65,7 +304,7 @@ function animate() {
   requestAnimationFrame(animate);
   const deltaTime = clock.getDelta();
   
-  if (currentVrm && document.getElementById('canvas-container').style.display !== 'none') {
+  if (currentVrm && !canvasContainer.classList.contains('hidden')) {
     currentVrm.update(deltaTime);
     
     if (!isSpeaking && Math.random() < 0.01) {
@@ -105,7 +344,7 @@ window.addEventListener('resize', () => {
 });
 
 // ==========================================
-// 5. SEQUENTIAL AUDIO (WITH 2D JAW-BOB LIP-SYNC)
+// 5. AUDIO PLAYBACK
 // ==========================================
 async function playAudioSequentially(url) {
     const audioResponse = await fetch(url + "?t=" + new Date().getTime());
@@ -124,7 +363,7 @@ async function playAudioSequentially(url) {
         const faceImg = document.getElementById('uploaded-face');
         const faceContainer = document.getElementById('face-container');
         
-        if (faceContainer.style.display === 'block' && faceImg.src) {
+        if (!faceContainer.classList.contains('hidden') && faceImg.src) {
             const animateFace = () => {
                 if (!isSpeaking) {
                     faceImg.style.transform = 'scale(1) translateY(0)';
@@ -156,7 +395,7 @@ async function playAudioSequentially(url) {
 }
 
 // ==========================================
-// 🧠 LOAD AVAILABLE MODELS FROM BACKEND
+// 🧠 LOAD MODELS
 // ==========================================
 async function loadModels() {
     try {
@@ -164,7 +403,7 @@ async function loadModels() {
         const data = await response.json();
         
         const modelSelect = document.getElementById('modelSelect');
-        modelSelect.innerHTML = ''; // Clear existing options
+        modelSelect.innerHTML = ''; 
         
         data.models.forEach(model => {
             const option = document.createElement('option');
@@ -177,8 +416,6 @@ async function loadModels() {
         console.error("❌ Failed to load models:", error);
     }
 }
-
-// Call this when the page loads
 loadModels();
 
 // ==========================================
@@ -186,13 +423,12 @@ loadModels();
 // ==========================================
 const speakBtn = document.getElementById('speakBtn');
 const userInput = document.getElementById('userInput');
-const chatContainer = document.getElementById('chat-container'); // The scrollable chat box
-const uploadBtn = document.getElementById('uploadBtn');
-const audioFileInput = document.getElementById('audioFile');
+const chatContainer = document.getElementById('chat-container'); 
+const imageUploadBtn = document.getElementById('imageUploadBtn');
+const recordBtn = document.getElementById('recordBtn');
 const personaSelect = document.getElementById('personaSelect');
 const modelSelect = document.getElementById('modelSelect');
 
-// Helper to scroll chat to the bottom
 function scrollToBottom() {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
@@ -203,22 +439,23 @@ function updateCharacterVisuals(persona) {
     const body = document.body;
 
     body.classList.remove('bg-tutor', 'bg-business', 'bg-casual');
+    if (aura) aura.classList.remove('aura-tutor', 'aura-business', 'aura-casual');
 
     if (persona === 'Tutor') {
         body.classList.add('bg-tutor');
-        if(aura) aura.style.background = 'rgba(255, 193, 7, 0.5)'; 
+        if(aura) aura.classList.add('aura-tutor');
         if(badge) badge.innerText = '📚';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0.8); 
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0.8);
     } else if (persona === 'Business') {
         body.classList.add('bg-business');
-        if(aura) aura.style.background = 'rgba(0, 123, 255, 0.5)'; 
+        if(aura) aura.classList.add('aura-business');
         if(badge) badge.innerText = '💼';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0); 
-    } else { 
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 0);
+    } else {
         body.classList.add('bg-casual');
-        if(aura) aura.style.background = 'rgba(255, 0, 128, 0.5)'; 
+        if(aura) aura.classList.add('aura-casual');
         if(badge) badge.innerText = '😎';
-        if(currentVrm) currentVrm.expressionManager.setValue('happy', 1.0); 
+        if(currentVrm) currentVrm.expressionManager.setValue('happy', 1.0);
     }
 }    
 
@@ -233,7 +470,6 @@ speakBtn.addEventListener('click', async () => {
     initAudioContext();
     if (audioContext.state === 'suspended') audioContext.resume();
 
-    // 1. IMMEDIATELY SHOW USER'S QUESTION ON THE RIGHT
     const userMsg = document.createElement('div');
     userMsg.className = 'msg-user';
     userMsg.innerText = text;
@@ -242,39 +478,30 @@ speakBtn.addEventListener('click', async () => {
 
     speakBtn.innerText = "Thinking...";
     speakBtn.disabled = true;
-    userInput.value = ""; // Clear input
+    userInput.value = ""; 
 
     try {
-      // 👇 FIX: We define BOTH variables right here 👇
       const selectedPersona = personaSelect.value;
       const selectedModel = modelSelect.value; 
-      // 👆 FIX 👆
 
       updateCharacterVisuals(selectedPersona); 
 
       const response = await fetch('http://localhost:8000/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            text, 
-            persona: selectedPersona, 
-            model_id: selectedModel // Now it knows what selectedModel is!
-        })
+        body: JSON.stringify({ text, persona: selectedPersona, model_id: selectedModel })
       });
       
       const data = await response.json();
       
-      // 2. SHOW AVATAR'S ANSWER ON THE LEFT
       const avatarMsg = document.createElement('div');
       avatarMsg.className = 'msg-avatar';
-      avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text_en}</div><div class="text-ja">🇯🇵 ${data.text_ja}</div>`;
+      avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text_en}</div><div class="text-ja">🇯 ${data.text_ja}</div>`;
       chatContainer.appendChild(avatarMsg);
       scrollToBottom();
 
-      speakBtn.innerText = "🔊 Speaking English...";
+      speakBtn.innerText = "🔊 Speaking...";
       await playAudioSequentially(data.audio_url_en); 
-      
-      speakBtn.innerText = "🔊 Speaking Japanese...";
       await playAudioSequentially(data.audio_url_ja); 
       
       speakBtn.innerText = "Send";
@@ -287,174 +514,88 @@ speakBtn.addEventListener('click', async () => {
     }
 });
 
-// Audio Upload Logic
-audioFileInput.addEventListener('change', async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    uploadBtn.innerText = "⏳"; uploadBtn.disabled = true;
-    const formData = new FormData();
-    formData.append('audio', file);
-    try {
-        const response = await fetch('http://localhost:8000/transcribe', { method: 'POST', body: formData });
-        const data = await response.json();
-        userInput.value = data.text;
-    } catch (error) { console.error("❌ Transcription error:", error); }
-    finally { uploadBtn.innerText = "📁"; uploadBtn.disabled = false; audioFileInput.value = ""; }
-});
+imageUploadBtn.addEventListener('click', () => imageFileInput.click());
+
+if (recordBtn) {
+    recordBtn.addEventListener('click', async () => {
+        if (!avatarMode.classList.contains('active')) return;
+        if (isAvatarRecording) {
+            stopAvatarRecording();
+        } else {
+            await startAvatarRecording();
+        }
+    });
+}
 
 // ==========================================
 // 7. 2D IMAGE UPLOAD & MODE TOGGLE
 // ==========================================
 const imageFileInput = document.getElementById('imageFile');
 const faceContainer = document.getElementById('face-container');
-const canvasContainer = document.getElementById('canvas-container');
 const mode3dBtn = document.getElementById('mode3dBtn');
 const mode2dBtn = document.getElementById('mode2dBtn');
 
 imageFileInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            document.getElementById('uploaded-face').src = e.target.result;
-            mode2dBtn.click(); 
-        };
-        reader.readAsDataURL(file);
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+        alert('❌ Please select a valid image file');
+        imageFileInput.value = '';
+        return;
     }
+    
+    if (file.size > 5 * 1024 * 1024) {
+        alert('❌ Image too large (max 5MB)');
+        imageFileInput.value = '';
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        document.getElementById('uploaded-face').src = e.target.result;
+        mode2dBtn.click(); 
+    };
+    reader.readAsDataURL(file);
 });
 
 mode3dBtn.addEventListener('click', () => {
-    canvasContainer.style.display = 'block';
-    faceContainer.style.display = 'none';
-    mode3dBtn.style.backgroundColor = '#007bff';
-    mode2dBtn.style.backgroundColor = '#6c757d';
+    canvasContainer.classList.remove('hidden');
+    faceContainer.classList.add('hidden');
+    mode3dBtn.classList.add('active');
+    mode2dBtn.classList.remove('active');
 });
 
 mode2dBtn.addEventListener('click', () => {
     if (!document.getElementById('uploaded-face').src) {
-        alert("Please upload an image first using the 🖼️ button!");
+        alert("Please upload an image first!");
         return;
     }
-    canvasContainer.style.display = 'none';
-    faceContainer.style.display = 'block';
-    mode2dBtn.style.backgroundColor = '#007bff';
-    mode3dBtn.style.backgroundColor = '#6c757d';
+    canvasContainer.classList.add('hidden');
+    faceContainer.classList.remove('hidden');
+    mode2dBtn.classList.add('active');
+    mode3dBtn.classList.remove('active');
 });
-// ==========================================
-// 🌉 LIVE INTERVIEW: WEBSOCKET CLIENT
-// ==========================================
-// Connect to the backend tunnel. (We are User #1 for now)
-const ws = new WebSocket('ws://localhost:8000/interview_room/1');
-
-ws.onopen = () => {
-    console.log("✅ SUCCESS: Connected to the Live Interview Room!");
-};
-
-ws.onmessage = async (event) => {
-    try {
-        // Try to parse it as JSON (AI Response)
-        const data = JSON.parse(event.data);
-        
-        if (data.type === "ai_response") {
-            console.log("🧠 AI Response Received:", data.text);
-            
-            // Create a chat bubble for the translation
-            const avatarMsg = document.createElement('div');
-            avatarMsg.className = 'msg-avatar';
-            avatarMsg.innerHTML = `<div class="text-en">🇬🇧 ${data.text}</div>`;
-            chatContainer.appendChild(avatarMsg);
-            scrollToBottom();
-            
-            // Play the audio and trigger lip-sync!
-            await playAudioSequentially(data.audio_url);
-        }
-    } catch (e) {
-        // If it's not JSON, it's just a regular text message
-        console.log(" Received from Interview Room:", event.data);
-    }
-};
-ws.onclose = () => {
-    console.log("❌ Disconnected from Interview Room.");
-    
-    // 🛡️ FIX: If the connection drops, immediately stop the microphone to prevent spam errors
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-        console.log("🛑 Microphone stopped automatically due to disconnection.");
-    }
-    
-    // Reset the button UI
-    micBtn.innerText = "🎙️ Start Interview";
-    micBtn.style.backgroundColor = "#28a745";
-};
-
-
 
 // ==========================================
-// 🎤 SPRINT 2: MICROPHONE AUDIO CHUNKING
+// 🎙️ LIVE MODE - START INTERVIEW BUTTON (now backed by liveTranslation.js)
 // ==========================================
 const micBtn = document.getElementById('micBtn');
-let mediaRecorder;
-let audioChunks = [];
 
-micBtn.addEventListener('click', async () => {
-    // If the button says "Start", begin recording
-    if (micBtn.innerText.includes('Start')) {
-        try {
-            // 1. Ask the browser for microphone access
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            audioChunks = [];
-
-            // 2. Collect the audio data as it records
-            mediaRecorder.ondataavailable = (event) => {
-                audioChunks.push(event.data);
-            };
-
-            // 3. Every 4 seconds, stop and restart to create a "chunk"
-            const chunkInterval = setInterval(() => {
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    mediaRecorder.stop();
-                    mediaRecorder.start(); // Restart immediately for the next chunk
-                }
-            }, 4000); // 4000ms = 4 seconds
-
-            // 4. When a chunk stops, send it through the WebSocket!
-                        mediaRecorder.onstop = () => {
-                if (audioChunks.length > 0) {
-                    const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                    
-                    // 🛡️ FIX: Only send if the WebSocket is actually open!
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(blob); 
-                        console.log("🎤 Sent 4-second audio chunk to backend!");
-                    } else {
-                        console.warn("⚠️ WebSocket is closed. Dropping audio chunk.");
-                    }
-                    
-                    audioChunks = []; 
-                }
-            };
-
-            // Start the recording!
-            mediaRecorder.start();
-            micBtn.innerText = "🛑 Stop Interview";
-            micBtn.style.backgroundColor = "#dc3545"; // Turn button red
-            console.log("🎙️ Recording started. Sending chunks every 4 seconds...");
-
-        } catch (err) {
-            console.error("❌ Microphone access denied:", err);
-            alert("Please allow microphone access to start the interview.");
+if (micBtn) {
+    micBtn.addEventListener('click', async () => {
+        if (!isCurrentlyRecording()) {
+            const success = await startLiveRecording();
+            if (success) {
+                micBtn.innerText = '🛑 Stop & Submit';
+                micBtn.classList.add('danger');
+                micBtn.classList.remove('primary');
+            }
+        } else {
+            stopLiveRecording();
+            micBtn.innerText = '🎙️ Start Interview';
+            micBtn.classList.add('primary');
+            micBtn.classList.remove('danger');
         }
-        
-    } else {
-        // If the button says "Stop", end the recording
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-            mediaRecorder.stream.getTracks().forEach(track => track.stop()); // Release the mic
-        }
-        micBtn.innerText = "🎙️ Start Interview";
-        micBtn.style.backgroundColor = "#28a745"; // Turn button green
-        console.log("🛑 Recording stopped.");
-    }
-});
+    });
+}
