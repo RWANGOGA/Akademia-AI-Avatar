@@ -1,112 +1,134 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My AI Avatar</title>
-    <style>
-      body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: Arial, sans-serif; }
-      
-      #canvas-container { width: 100vw; height: 100vh; display: block; }
-      canvas { display: block; }
-      
-      /* 2D Face Container with Aura and Badge */
-      #face-container {
-        display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        width: 400px; height: 400px; border-radius: 50%;
-        overflow: visible; /* Allows the aura to show outside the circle */
-        border: 8px solid #007bff; background-color: #333;
-      }
-      #face-aura {
-        position: absolute; top: -30px; left: -30px; right: -30px; bottom: -30px;
-        border-radius: 50%; background: rgba(0, 123, 255, 0.4);
-        filter: blur(25px); z-index: -1; transition: background 0.5s ease;
-      }
-      #uploaded-face {
-        width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
-        transform-origin: center top; /* Anchors the top of the head so the jaw can drop */
-        transition: transform 0.05s linear;
-      }
-      #mode-badge {
-        position: absolute; top: 10px; right: 10px; font-size: 40px;
-        background: white; border-radius: 50%; width: 70px; height: 70px;
-        display: flex; align-items: center; justify-content: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 10;
-        transition: all 0.3s ease;
-      }
-
-      #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; color: #333; z-index: 100; }
-
-      #responseArea {
-        background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 10px; 
-        display: none; max-height: 150px; overflow-y: auto; 
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 10px;
-      }
-      #textEn { margin: 0 0 10px 0; font-weight: bold; color: #333; }
-      #textJa { margin: 0; color: #d32f2f; font-size: 1.1em; font-weight: 500; }
-
-      .controls-bar {
-        position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-        display: flex; flex-direction: column; z-index: 10; width: 90%; max-width: 700px;
-      }
-      .input-row { display: flex; gap: 10px; align-items: center; }
-      
-      input[type="text"], select { padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; outline: none; }
-      input[type="text"] { flex: 1; }
-      
-      button { padding: 12px 16px; font-size: 16px; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
-      #uploadBtn { background-color: #6f42c1; }
-      #speakBtn { background-color: #007bff; padding: 12px 24px; }
-      
-      .mode-toggle {
-        position: absolute; top: 20px; right: 20px; z-index: 100;
-        background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        display: flex; gap: 10px; align-items: center; font-weight: bold;
-      }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Akademia AI Avatar</title>
+    <link rel="stylesheet" href="./style.css">
   </head>
   <body>
+    <!-- MODE SWITCHER (Top Center) -->
+    <div class="mode-switcher">
+        <button id="avatarModeBtn" class="mode-btn active">🤖 Avatar Chat</button>
+        <button id="liveModeBtn" class="mode-btn">📹 Live Communication</button>
+    </div>
+
     <div id="loading">Loading 3D Avatar...</div>
-    <div id="canvas-container"></div>
+    
+    <!-- ========================================== -->
+    <!-- MODE 1: AVATAR CHAT (Current System) -->
+    <!-- ========================================== -->
+    <div id="avatarMode" class="mode-container active">
+        <!-- LEFT SIDE: Avatar Area -->
+        <div id="canvas-container"></div>
 
-    <!-- 2D Face with Aura and Badge -->
-    <div id="face-container">
-      <div id="face-aura"></div>
-      <img id="uploaded-face" src="" alt="User Face">
-      <div id="mode-badge">💼</div>
+        <!-- 2D Face with Aura and Badge -->
+        <div id="face-container">
+            <div id="face-aura"></div>
+            <img id="uploaded-face" src="" alt="User Face">
+            <div id="mode-badge">💼</div>
+        </div>
+
+        <!-- RIGHT SIDE: Chat Panel -->
+        <div id="chat-wrapper">
+            <div id="chat-container"></div>
+            
+            <div class="controls-bar">
+                <div class="input-row">
+                    <select id="personaSelect" title="Persona" aria-label="Persona">
+                        <option value="Tutor">👨‍🏫 Tutor</option>
+                        <option value="Business">💼 Business</option>
+                        <option value="Casual">😎 Casual</option>
+                    </select>
+
+                    <select id="modelSelect" title="AI Model" aria-label="AI Model">
+                        <option>Loading models...</option>
+                    </select>
+
+                    <input type="text" id="userInput" placeholder="Type here...">
+                    
+                    <!-- Hidden File Input for Images Only -->
+                    <input type="file" id="imageFile" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/*" class="hidden-file-input">
+                    
+                    <!-- Action Buttons -->
+                    <button type="button" id="recordBtn" title="Record Voice" class="record-btn">🎙️</button>
+                    <button type="button" id="imageUploadBtn" title="Upload Image">🖼️</button>
+                    <button type="button" id="speakBtn">Send</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="mode-toggle">
-      <span>Mode:</span>
-      <button id="mode3dBtn" style="background-color: #007bff;">3D Avatar</button>
-      <button id="mode2dBtn" style="background-color: #6c757d;">2D Photo</button>
+    <!-- ========================================== -->
+    <!-- MODE 2: LIVE COMMUNICATION (Zoom-Style) -->
+    <!-- ========================================== -->
+    <div id="liveMode" class="mode-container">
+        <!-- LEFT SIDE: Interviewer (HR) -->
+        <div class="participant-panel">
+            <div class="participant-label">🇯 Interviewer (HR)</div>
+            <div class="video-container" id="hrVideoContainer">
+                <div class="live-badge">LIVE</div>
+                <div class="video-placeholder" id="hrPlaceholder">
+                    <div class="video-placeholder-icon">🎥</div>
+                    <div class="video-placeholder-text">Camera Off</div>
+                </div>
+                <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
+                <div class="speaking-indicator" id="hrSpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+                <div class="participant-avatar-overlay" id="hrAvatar">🤖</div>
+            </div>
+            <div class="translation-display" id="hrTranslation">
+                <div class="original-text">Waiting for speech...</div>
+                <div class="translated-text"></div>
+            </div>
+        </div>
+
+        <!-- RIGHT SIDE: Candidate (Employee) -->
+        <div class="participant-panel">
+            <div class="participant-label">🇺 Candidate (Employee)</div>
+            <div class="video-container" id="candidateVideoContainer">
+                <div class="video-placeholder" id="candidatePlaceholder">
+                    <div class="video-placeholder-icon">👤</div>
+                    <div class="video-placeholder-text">Waiting for candidate...</div>
+                </div>
+                <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
+                <div class="speaking-indicator" id="candidateSpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+                <div class="participant-avatar-overlay" id="candidateAvatar">👨‍💼</div>
+            </div>
+            <div class="translation-display" id="candidateTranslation">
+                <div class="original-text">Waiting for speech...</div>
+                <div class="translated-text"></div>
+            </div>
+        </div>
+
+        <!-- CONTROL BAR (Bottom) -->
+        <div class="live-controls">
+            <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
+            <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
+            <button type="button" id="startTranslationBtn" class="control-btn primary">🌐 Start Live Translation</button>
+            <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Interview</button>
+            <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
+        </div>
     </div>
 
-    <div class="controls-bar">
-      <div id="responseArea">
-        <p id="textEn"></p>
-        <p id="textJa"></p>
-      </div>
-      
-      <div class="input-row">
-        <select id="personaSelect" title="Persona" aria-label="Persona">
-          <option value="Tutor">👨‍ Friendly Tutor</option>
-          <option value="Business">💼 Business Guide</option>
-          <option value="Casual">😎 Casual Friend</option>
-        </select>
-
-        <input type="text" id="userInput" placeholder="Type or upload audio...">
-        
-        <input type="file" id="audioFile" accept="audio/*" style="display: none;">
-        <button id="uploadBtn" onclick="document.getElementById('audioFile').click()">📁</button>
-
-        <input type="file" id="imageFile" accept="image/*" style="display: none;">
-        <button id="imageUploadBtn" onclick="document.getElementById('imageFile').click()" style="background-color: #fd7e14;">🖼️</button>
-
-        <button id="speakBtn">Ask & Speak</button>
-      </div>
+    <!-- OLD 3D/2D TOGGLE (Only visible in Avatar Mode) -->
+    <div class="mode-toggle hidden">
+        <span>Avatar Mode:</span>
+        <button type="button" id="mode3dBtn" class="mode-toggle-btn active">3D</button>
+        <button type="button" id="mode2dBtn" class="mode-toggle-btn">2D</button>
     </div>
 
-    <script type="module" src="/main.js"></script>
+    <script type="module" src="/main.js"></script> 
   </body>
 </html>

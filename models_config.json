@@ -1,0 +1,20 @@
+{
+  "available_models": [
+    {
+      "id": "google/gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash (Google - DEFAULT)",
+      "provider": "google"
+    },
+    {
+      "id": "nvidia/meta/llama-3.1-70b-instruct",
+      "name": "Llama 3.1 70B (NVIDIA)",
+      "provider": "nvidia"
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o (OpenAI - Pending Billing)",
+      "provider": "openai"
+    }
+  ],
+  "default_model": "google/gemini-2.5-flash"
+}
