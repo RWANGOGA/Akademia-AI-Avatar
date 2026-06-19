@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Node
+node_modules/
+ai-avatar-web/dist/
+
+# Generated audio / uploads
+static/*.mp3
+static/face_upload.*
+
+# Local avatar models (large; provide your own .vrm files)
+ai-avatar-web/public/assets/avatars/*.vrm
+ai-avatar-web/public/assets/avatars/*.glb
+
+# OS
+.DS_Store
