@@ -5,106 +5,365 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My AI Avatar</title>
     <style>
-      body { margin: 0; overflow: hidden; background-color: #f0f0f0; font-family: Arial, sans-serif; }
-      
-      #canvas-container { width: 100vw; height: 100vh; display: block; }
-      canvas { display: block; }
-      
-      /* 2D Face Container with Aura and Badge */
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; overflow: hidden;
+        font-family: 'Segoe UI', Arial, sans-serif;
+        background: #0f1424;
+      }
+
+      #sidebar {
+        position: absolute; top: 0; left: 0; bottom: 0; width: 96px;
+        background: linear-gradient(180deg, #141b34 0%, #0e1428 100%);
+        border-right: 1px solid rgba(255,255,255,0.06);
+        z-index: 200; display: flex; flex-direction: column;
+        align-items: center; padding: 18px 0;
+      }
+      .sidebar-logo {
+        width: 44px; height: 44px; border-radius: 12px;
+        background: linear-gradient(135deg, #c9a876, #8a6d3b);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 20px; margin-bottom: 26px;
+        box-shadow: 0 4px 14px rgba(201,168,118,0.35);
+      }
+      .nav-item {
+        display: flex; flex-direction: column; align-items: center; gap: 5px;
+        padding: 12px 6px; border-radius: 14px; cursor: pointer;
+        color: #717999; width: 72px;
+        transition: all 0.15s ease; margin-bottom: 10px;
+        position: relative;
+      }
+      .nav-item:hover { background: rgba(255,255,255,0.05); color: #cfd5f0; }
+      .nav-item.active {
+        background: rgba(201, 168, 118, 0.14); color: #e6cb9a;
+      }
+      .nav-item.active::before {
+        content: '';
+        position: absolute; left: -1px; top: 50%; transform: translateY(-50%);
+        width: 3px; height: 22px; border-radius: 2px;
+        background: #c9a876;
+      }
+      .nav-item .nav-icon-circle {
+        width: 38px; height: 38px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px; background: rgba(255,255,255,0.04);
+      }
+      .nav-item.active .nav-icon-circle { background: rgba(201,168,118,0.2); }
+      .nav-item .nav-text { font-size: 9.5px; font-weight: 600; letter-spacing: 0.2px; text-align: center; }
+      .nav-item .dot-badge {
+        position: absolute; top: 6px; right: 16px;
+        width: 7px; height: 7px; border-radius: 50%;
+        background: #ff5c7a; border: 2px solid #141b34;
+      }
+
+      .sidebar-footer { margin-top: auto; }
+      #resetBtn {
+        width: 56px; height: 56px; border-radius: 50%;
+        background: rgba(255,255,255,0.06); color: #c7cdea;
+        border: 1px solid rgba(255,255,255,0.08);
+        font-size: 20px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #resetBtn:hover { background: rgba(255,255,255,0.1); transform: rotate(-25deg); transition: transform 0.2s; }
+
+      #main-area {
+        position: absolute; top: 0; left: 96px; right: 0; bottom: 0;
+        overflow: hidden;
+      }
+
+      #canvas-container {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: url('/background.jpg') center/cover no-repeat;
+        display: block;
+      }
+      #canvas-container::before {
+        content: '';
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: linear-gradient(180deg, rgba(10,12,20,0.35) 0%, rgba(10,12,20,0.6) 100%);
+        pointer-events: none; z-index: 0;
+      }
+      canvas { display: block; position: relative; z-index: 1; }
+
+      #canvas-container.speaking::after {
+        content: '';
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 420px; height: 420px; border-radius: 50%;
+        box-shadow: 0 0 60px 20px rgba(201, 168, 118, 0.45);
+        animation: pulse 1.2s ease-in-out infinite;
+        pointer-events: none; z-index: 1;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+      }
+
       #face-container {
         display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        width: 400px; height: 400px; border-radius: 50%;
-        overflow: visible; /* Allows the aura to show outside the circle */
-        border: 8px solid #007bff; background-color: #333;
+        width: 380px; height: 380px; border-radius: 50%;
+        overflow: visible;
+        border: 8px solid #c9a876; background-color: #333;
       }
       #face-aura {
         position: absolute; top: -30px; left: -30px; right: -30px; bottom: -30px;
-        border-radius: 50%; background: rgba(0, 123, 255, 0.4);
+        border-radius: 50%; background: rgba(201, 168, 118, 0.35);
         filter: blur(25px); z-index: -1; transition: background 0.5s ease;
       }
       #uploaded-face {
         width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
-        transform-origin: center top; /* Anchors the top of the head so the jaw can drop */
+        transform-origin: center top;
         transition: transform 0.05s linear;
       }
       #mode-badge {
-        position: absolute; top: 10px; right: 10px; font-size: 40px;
-        background: white; border-radius: 50%; width: 70px; height: 70px;
+        position: absolute; top: 10px; right: 10px; font-size: 36px;
+        background: white; border-radius: 50%; width: 64px; height: 64px;
         display: flex; align-items: center; justify-content: center;
         box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 10;
         transition: all 0.3s ease;
       }
 
-      #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px; color: #333; z-index: 100; }
+      #loading {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        font-size: 15px; color: #eee; z-index: 100;
+      }
+
+      .mode-toggle {
+        position: absolute; top: 20px; right: 24px; z-index: 100;
+        background: rgba(17, 24, 46, 0.85); padding: 8px; border-radius: 24px;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        display: flex; gap: 6px; align-items: center;
+      }
+      .mode-toggle span { color: #aab2cf; font-size: 13px; font-weight: 600; margin-left: 6px; }
+      .mode-toggle button {
+        border: none; border-radius: 18px; padding: 8px 16px; font-size: 13px;
+        font-weight: 600; cursor: pointer;
+      }
+
+      #historyPanel {
+        display: none; position: absolute; top: 76px; right: 24px;
+        width: 300px; max-height: 320px; overflow-y: auto;
+        background: rgba(17, 24, 46, 0.96); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px; padding: 14px; z-index: 99;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      }
+      #historyPanel.show { display: block; }
+      .history-entry { margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+      .history-entry:last-child { border-bottom: none; }
+      .history-user { color: #9fb3e8; font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+      .history-reply { color: #eef1fb; font-size: 13px; line-height: 1.4; }
 
       #responseArea {
-        background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 10px; 
-        display: none; max-height: 150px; overflow-y: auto; 
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 10px;
+        position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%);
+        width: 90%; max-width: 640px;
+        background: rgba(17, 24, 46, 0.85); padding: 14px 18px; border-radius: 14px; 
+        display: none; max-height: 130px; overflow-y: auto; 
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4); z-index: 15;
+        border: 1px solid rgba(255,255,255,0.08);
       }
-      #textEn { margin: 0 0 10px 0; font-weight: bold; color: #333; }
-      #textJa { margin: 0; color: #d32f2f; font-size: 1.1em; font-weight: 500; }
+      #textEn { margin: 0 0 8px 0; font-weight: 600; color: #eef1fb; font-size: 14px; }
+      #textJa { margin: 0; color: #d8bd8a; font-size: 14px; font-weight: 500; }
+
+      #statusPill {
+        display: none; position: absolute; bottom: 168px; left: 50%; transform: translateX(-50%);
+        background: rgba(201, 168, 118, 0.2); color: #f0ddb8;
+        border: 1px solid rgba(201, 168, 118, 0.4); z-index: 15;
+        font-size: 12px; font-weight: 600;
+        padding: 6px 16px; border-radius: 16px;
+      }
+      #statusPill.show { display: inline-flex; align-items: center; gap: 6px; }
+      .typing-dots span {
+        display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+        background: #f0ddb8; margin-left: 2px;
+        animation: bounce 1.2s infinite;
+      }
+      .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+      .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
 
       .controls-bar {
         position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
-        display: flex; flex-direction: column; z-index: 10; width: 90%; max-width: 700px;
+        z-index: 10; width: 92%; max-width: 760px;
       }
-      .input-row { display: flex; gap: 10px; align-items: center; }
-      
-      input[type="text"], select { padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; outline: none; }
-      input[type="text"] { flex: 1; }
-      
-      button { padding: 12px 16px; font-size: 16px; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
-      #uploadBtn { background-color: #6f42c1; }
-      #speakBtn { background-color: #007bff; padding: 12px 24px; }
-      
-      .mode-toggle {
-        position: absolute; top: 20px; right: 20px; z-index: 100;
-        background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        display: flex; gap: 10px; align-items: center; font-weight: bold;
+      .input-row {
+        display: flex; gap: 8px; align-items: center;
+        background: rgba(17, 24, 46, 0.85); padding: 10px 14px; border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      }
+      .persona-block {
+        display: flex; flex-direction: column; gap: 2px;
+        padding-right: 10px; border-right: 1px solid rgba(255,255,255,0.08);
+      }
+      .persona-label { font-size: 10px; color: #6b7493; text-transform: uppercase; letter-spacing: 0.5px; }
+
+      select {
+        padding: 8px 10px; font-size: 13px; border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.12); outline: none;
+        background: #161c30; color: #eef1fb; cursor: pointer;
+      }
+      input[type="text"] {
+        flex: 1; min-width: 100px;
+        padding: 12px 14px; font-size: 14px; border-radius: 10px;
+        border: 1px solid rgba(255,255,255,0.12); outline: none;
+        background: #161c30; color: #eef1fb;
+      }
+      input[type="text"]::placeholder { color: #6b7493; }
+
+      .icon-btn {
+        display: flex; flex-direction: column; align-items: center; gap: 3px;
+        background: transparent; border: none; cursor: pointer;
+        padding: 6px 8px; border-radius: 10px; transition: background 0.15s ease;
+      }
+      .icon-btn:hover { background: rgba(255,255,255,0.06); }
+      .icon-btn .icon-circle {
+        width: 36px; height: 36px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 15px; background: #1f2640; color: #c7cdea;
+      }
+      .icon-btn .icon-label { font-size: 9px; color: #8a90b5; }
+
+      #micBtn .icon-circle.recording { background: #ff1744; color: white; animation: blink 1s infinite; }
+      @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+      #speakBtn .icon-circle { background: #c9a876; color: #1a1a1a; }
+      #uploadBtn .icon-circle { background: #5b4fc4; color: white; }
+      #muteBtn .icon-circle { background: #2c8c6f; color: white; }
+
+      /* ===== UPLOAD POPUP MENU ===== */
+      .upload-wrapper { position: relative; }
+      .upload-menu {
+        display: none;
+        position: absolute;
+        bottom: 56px;
+        left: 0;
+        background: #1a2138;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 14px;
+        padding: 8px;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+        z-index: 60;
+        min-width: 170px;
+      }
+      .upload-menu.show { display: flex; flex-direction: column; }
+      .upload-menu button {
+        display: flex; align-items: center; gap: 10px;
+        background: transparent; border: none; color: #eef1fb;
+        font-size: 13px; padding: 10px 12px; border-radius: 9px;
+        cursor: pointer; text-align: left; width: 100%;
+      }
+      .upload-menu button:hover { background: rgba(255,255,255,0.08); }
+      .upload-menu .menu-icon { font-size: 15px; width: 18px; text-align: center; }
+
+      .footer-credit {
+        position: absolute; bottom: 6px; right: 16px; z-index: 5;
+        font-size: 11px; color: #d8d2c4; letter-spacing: 0.3px;
       }
     </style>
   </head>
   <body>
-    <div id="loading">Loading 3D Avatar...</div>
-    <div id="canvas-container"></div>
+    <div id="sidebar">
+      <div class="sidebar-logo">✨</div>
 
-    <!-- 2D Face with Aura and Badge -->
-    <div id="face-container">
-      <div id="face-aura"></div>
-      <img id="uploaded-face" src="" alt="User Face">
-      <div id="mode-badge">💼</div>
+      <div class="nav-item active">
+        <span class="nav-icon-circle">👤</span>
+        <span class="nav-text">Avatar</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon-circle">⚙️</span>
+        <span class="nav-text">Persona</span>
+      </div>
+      <div class="nav-item" id="historyToggle">
+        <span class="nav-icon-circle">🕓</span>
+        <span class="nav-text">History</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon-circle">🪪</span>
+        <span class="nav-text">Profile</span>
+      </div>
+      <div class="nav-item">
+        <span class="nav-icon-circle">❓</span>
+        <span class="nav-text">Help</span>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="resetBtn" title="Reset Conversation">🔄</button>
+      </div>
     </div>
 
-    <div class="mode-toggle">
-      <span>Mode:</span>
-      <button id="mode3dBtn" style="background-color: #007bff;">3D Avatar</button>
-      <button id="mode2dBtn" style="background-color: #6c757d;">2D Photo</button>
-    </div>
+    <div id="main-area">
+      <div id="loading">Loading 3D Avatar...</div>
+      <div id="canvas-container"></div>
 
-    <div class="controls-bar">
+      <div id="face-container">
+        <div id="face-aura"></div>
+        <img id="uploaded-face" src="" alt="User Face">
+        <div id="mode-badge">💼</div>
+      </div>
+
+      <div class="mode-toggle">
+        <span>Mode:</span>
+        <button id="mode3dBtn" style="background-color: #c9a876; color:#1a1a1a;">3D Avatar</button>
+        <button id="mode2dBtn" style="background-color: #2a3050; color:#aab2cf;">2D Photo</button>
+      </div>
+
+      <div id="historyPanel">
+        <div id="historyList"></div>
+      </div>
+
+      <div id="statusPill">
+        <span id="statusText">Thinking</span>
+        <span class="typing-dots"><span></span><span></span><span></span></span>
+      </div>
+
       <div id="responseArea">
         <p id="textEn"></p>
         <p id="textJa"></p>
       </div>
-      
-      <div class="input-row">
-        <select id="personaSelect" title="Persona" aria-label="Persona">
-          <option value="Tutor">👨‍ Friendly Tutor</option>
-          <option value="Business">💼 Business Guide</option>
-          <option value="Casual">😎 Casual Friend</option>
-        </select>
 
-        <input type="text" id="userInput" placeholder="Type or upload audio...">
-        
-        <input type="file" id="audioFile" accept="audio/*" style="display: none;">
-        <button id="uploadBtn" onclick="document.getElementById('audioFile').click()">📁</button>
+      <div class="controls-bar">
+        <div class="input-row">
+          <div class="persona-block">
+            <span class="persona-label">Persona</span>
+            <select id="personaSelect" title="Persona" aria-label="Persona">
+              <option value="Tutor">😊 Friendly Tutor</option>
+              <option value="Business">💼 Business Guide</option>
+              <option value="Casual">😎 Casual Friend</option>
+            </select>
+          </div>
 
-        <input type="file" id="imageFile" accept="image/*" style="display: none;">
-        <button id="imageUploadBtn" onclick="document.getElementById('imageFile').click()" style="background-color: #fd7e14;">🖼️</button>
+          <input type="text" id="userInput" placeholder="Ask a question...">
 
-        <button id="speakBtn">Ask & Speak</button>
+          <!-- Hidden file inputs -->
+          <input type="file" id="audioFile" accept="audio/*" style="display: none;">
+          <input type="file" id="imageFile" accept="image/*" style="display: none;">
+
+          <!-- Single Upload button with popup menu (paperclip style) -->
+          <div class="upload-wrapper">
+            <button id="uploadBtn" class="icon-btn" type="button">
+              <span class="icon-circle">📎</span><span class="icon-label">Upload</span>
+            </button>
+            <div id="uploadMenu" class="upload-menu">
+              <button id="pickGallery" type="button"><span class="menu-icon">🖼️</span> Gallery</button>
+              <button id="pickFiles" type="button"><span class="menu-icon">📁</span> Files</button>
+              <button id="pickAudio" type="button"><span class="menu-icon">🎵</span> Audio</button>
+            </div>
+          </div>
+
+          <button id="micBtn" class="icon-btn" type="button">
+            <span class="icon-circle">🎤</span><span class="icon-label">Record</span>
+          </button>
+
+          <button id="speakBtn" class="icon-btn" type="button">
+            <span class="icon-circle">➤</span><span class="icon-label">Send</span>
+          </button>
+
+          <button id="muteBtn" class="icon-btn" type="button">
+            <span class="icon-circle">🔊</span><span class="icon-label">Audio Output</span>
+          </button>
+        </div>
       </div>
+
+      <div class="footer-credit">Akademia AI Avatar Project</div>
     </div>
 
     <script type="module" src="/main.js"></script>
