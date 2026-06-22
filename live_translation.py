@@ -5,26 +5,22 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import edge_tts
 
-from clients import groq_stt_client, get_llm_client, PYDUB_AVAILABLE
+from clients import groq_stt_client, get_llm_client, PYDUB_AVAILABLE, deepgram_client
 
 try:
     from pydub import AudioSegment
 except ImportError:
     pass
 
+# Deepgram v7 imports (updated)
+from deepgram import DeepgramClient
+
 router = APIRouter()
 
 # ==========================================
-# ROOM MANAGEMENT
-# Each participant joins with their OWN chosen name, title, and language
-# (like entering your name on a Zoom join screen) — nothing is hardcoded
-# to a fixed "interviewer" or "candidate" role anymore. The backend
-# translates whatever a speaker says into every OTHER participant's own
-# chosen language, dynamically.
+# ROOM MANAGEMENT (unchanged)
 # ==========================================
 
-# Maps a spoken/target language name to an Edge-TTS voice.
-# Add more entries here to support additional languages.
 LANGUAGE_VOICES = {
     "English": "en-US-AriaNeural",
     "Japanese": "ja-JP-NanamiNeural",
@@ -35,7 +31,7 @@ LANGUAGE_VOICES = {
     "Korean": "ko-KR-SunHiNeural",
     "Arabic": "ar-SA-ZariyahNeural",
     "Swahili": "sw-KE-ZuriNeural",
-    "Luganda": "en-US-AriaNeural",  # fallback — Edge-TTS has no native Luganda voice
+    "Luganda": "en-US-AriaNeural",
 }
 
 DEFAULT_VOICE = "en-US-AriaNeural"
@@ -51,12 +47,12 @@ class Participant:
         self.name = name
         self.title = title
         self.language = language
-        self.last_sentence = ""  # used as translation context for this speaker
+        self.last_sentence = ""
 
 
 class TranslationRoom:
     def __init__(self):
-        self.participants: dict[str, Participant] = {}  # participant_id -> Participant
+        self.participants: dict[str, Participant] = {}
 
     async def join(self, participant_id: str, websocket: WebSocket, name: str, title: str, language: str):
         await websocket.accept()
@@ -81,7 +77,6 @@ class TranslationRoom:
             await participant.websocket.send_text(json.dumps(payload))
 
     async def broadcast_roster(self):
-        """Let everyone know who's currently in the room and what language they speak."""
         roster = [
             {"name": p.name, "title": p.title, "language": p.language}
             for p in self.participants.values()
@@ -118,8 +113,32 @@ def normalize_audio(raw_bytes: bytes) -> bytes:
         print(f"⚠️ Normalization bypassed: {e}")
         return raw_bytes
 
-
 def transcribe(audio_bytes: bytes) -> str:
+    if not deepgram_client:
+        print("⚠️ Deepgram not configured, falling back to Groq")
+        return groq_transcribe(audio_bytes)
+    
+    try:
+        # ✅ Correct Deepgram SDK v7 syntax for pre-recorded audio
+        response = deepgram_client.listen.v1.media.transcribe_file(
+            request=audio_bytes,           # raw bytes
+            model="nova-2",
+            smart_format=True,
+            punctuate=True,
+            detect_language=True,          # Let it auto-detect
+            # Do NOT pass 'language' list when detect_language=True
+        )
+        
+        transcript = response.results.channels[0].alternatives[0].transcript
+        return transcript.strip()
+        
+    except Exception as e:
+        print(f"❌ Deepgram transcription failed: {e}")
+        return groq_transcribe(audio_bytes)
+
+
+def groq_transcribe(audio_bytes: bytes) -> str:
+    """Helper to avoid duplication"""
     audio_file = io.BytesIO(audio_bytes)
     audio_file.name = "input.wav"
     transcript = groq_stt_client.audio.transcriptions.create(
@@ -130,6 +149,7 @@ def transcribe(audio_bytes: bytes) -> str:
     return transcript.text.strip()
 
 
+# The rest of your file (translate, generate_tts, websocket endpoint) remains exactly the same
 def translate(text: str, target_lang: str, previous_sentence: str = "") -> str:
     client, model_name = get_llm_client("nvidia/meta/llama-3.1-70b-instruct")
 
@@ -163,9 +183,6 @@ async def generate_tts(text: str, voice: str, path: str):
 
 @router.websocket("/live_translation/{room_id}/{participant_id}")
 async def live_translation_endpoint(websocket: WebSocket, room_id: str, participant_id: str):
-    # The first message after connecting must be a JSON "join" packet
-    # carrying the participant's own chosen name, title, and language —
-    # equivalent to a Zoom join screen. Nothing is pre-decided server-side.
     room = get_room(room_id)
 
     await websocket.accept()
@@ -211,12 +228,9 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, particip
 
                     print(f"📝 [{speaker.name}] said: {spoken_text}")
 
-                    # Translate into EVERY other participant's own chosen
-                    # language — not a single fixed counterpart language.
                     other_participants = room.others(participant_id)
 
                     if not other_participants:
-                        # No one else in the room yet to translate for
                         speaker.last_sentence = spoken_text
                         continue
 
@@ -228,7 +242,6 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, particip
                         )
                         print(f"🌐 For {other.name} ({other.language}): {translated_text}")
 
-                        # STEP 1 — caption arrives instantly
                         await room.send_to(other_id, {
                             "type": "caption",
                             "original_text": spoken_text,
@@ -237,9 +250,6 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, particip
                             "from_title": speaker.title,
                         })
 
-                        # STEP 2 — audio generated and sent after, so the
-                        # listener already has text on screen while this
-                        # ~0.5-1s step runs.
                         audio_filename = f"{uuid.uuid4().hex}.mp3"
                         audio_path = f"static/{audio_filename}"
                         await generate_tts(translated_text, voice_for_language(other.language), audio_path)
@@ -250,7 +260,6 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, particip
                             "from_name": speaker.name,
                         })
 
-                    # Echo the original caption back to the speaker themselves
                     await room.send_to(participant_id, {
                         "type": "own_caption",
                         "original_text": spoken_text,

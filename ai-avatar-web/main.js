@@ -3,8 +3,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import './style.css'; 
 import {
-    connectlivetranslation,
-    disconnectlivetranslation,
+    connectLiveTranslation,
+    disconnectLiveTranslation,
     startListening,
     stopListening,
     isCurrentlyListening,
@@ -89,7 +89,7 @@ if (joinRoomBtn) {
             return;
         }
 
-        connectlivetranslation({ name, title, language });
+        connectLiveTranslation({ name, title, language });
         hideJoinScreen();
 
         const myLabel = document.getElementById('myPanelLabel');
@@ -429,7 +429,7 @@ async function playAudioSequentially(url) {
     return new Promise((resolve) => {
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(analyser)          g;
+        source.connect(analyser)          ;
         analyser.connect(audioContext.destination);
         
         isSpeaking = true;

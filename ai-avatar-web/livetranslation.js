@@ -1,33 +1,27 @@
 // ==========================================
 // 🌐 LIVE TRANSLATION MODULE
-// Handles the Zoom-style two-device live interpreter feature.
-// Completely separate from the Avatar Chat websocket/logic.
+// Matches the new backend protocol in live_translation.py
 // ==========================================
 
 let liveWs = null;
 let liveMediaRecorder = null;
 let liveAudioChunks = [];
 let isLiveRecording = false;
+let audioCtx = null;
 
-// 🆕 IDENTITY TRACKING (Required by main.js)
+// 🆔 IDENTITY TRACKING
 let _myIdentity = { name: '', title: '', language: 'English' };
+let _myParticipantId = null;
 
-// Read role + room from the URL, e.g.:
-//   index.html?role=interviewer&room=room1   (HR's device)
-//   index.html?role=candidate&room=room1     (Candidate's device)
-const urlParams = new URLSearchParams(window.location.search);
-const MY_ROLE = urlParams.get('role') || 'interviewer';
-const ROOM_ID = urlParams.get('room') || 'room1';
-
-export function getMyRole() {
-    return MY_ROLE;
+// Generate a unique participant ID for this session
+function generateParticipantId() {
+    const existing = sessionStorage.getItem('live_participant_id');
+    if (existing) return existing;
+    const fresh = crypto.randomUUID();
+    sessionStorage.setItem('live_participant_id', fresh);
+    return fresh;
 }
 
-export function getRoomId() {
-    return ROOM_ID;
-}
-
-// 🆕 MISSING EXPORTS REQUIRED BY MAIN.JS
 export function getMyIdentity() {
     return _myIdentity;
 }
@@ -36,30 +30,42 @@ export function hasJoinedRoom() {
     return liveWs !== null && liveWs.readyState === WebSocket.OPEN;
 }
 
-// Aliases so main.js can use startListening/stopListening instead of startLiveRecording
+// Aliases for main.js compatibility
 export const startListening = startLiveRecording;
 export const stopListening = stopLiveRecording;
-export const isCurrentlyListening = isCurrentlyRecording;
+export const isCurrentlyListening = () => isLiveRecording;
 
 // ------------------------------------------
-// Connect to the backend live_translation websocket
+// 🪪 CONNECT TO LIVE TRANSLATION ROOM
 // ------------------------------------------
-// 🆕 UPDATED to accept the identity object from the Join Screen
-export function connectlivetranslation(identity = null) {
+export function connectLiveTranslation(identity) {
     if (identity) {
         _myIdentity = { ..._myIdentity, ...identity };
     }
 
     if (liveWs && (liveWs.readyState === WebSocket.OPEN || liveWs.readyState === WebSocket.CONNECTING)) {
-        return; // already connected / connecting
+        return;
     }
 
-    liveWs = new WebSocket(`ws://localhost:8000/live_translation/${ROOM_ID}/${MY_ROLE}`);
+    _myParticipantId = generateParticipantId();
+    const roomId = 'room1'; // Can be made dynamic later
+    
+    console.log(`🔌 Connecting to room "${roomId}" as "${_myIdentity.name}" (ID: ${_myParticipantId})`);
+    
+    liveWs = new WebSocket(`ws://localhost:8000/live_translation/${roomId}/${_myParticipantId}`);
 
-        liveWs.onopen = () => {
-        console.log(`✅ Live translation connected — room "${ROOM_ID}" as "${MY_ROLE}"`);
+    liveWs.onopen = () => {
+        console.log(`✅ WebSocket connected. Sending join packet...`);
         
-        // 🆕 UPDATE THE UI BUTTON WHEN CONNECTED
+        // 🆕 Send the required "join" packet as the FIRST message
+        liveWs.send(JSON.stringify({
+            type: "join",
+            name: _myIdentity.name,
+            title: _myIdentity.title || "",
+            language: _myIdentity.language
+        }));
+        
+        // Update the UI button
         const btn = document.getElementById('startTranslationBtn');
         if (btn) {
             btn.innerText = '🌐 Connected';
@@ -68,10 +74,42 @@ export function connectlivetranslation(identity = null) {
         }
     };
 
+    liveWs.onmessage = async (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            console.log("📩 Received:", data.type, data);
+
+            switch (data.type) {
+                case "roster":
+                    handleRoster(data.participants);
+                    break;
+                    
+                case "caption":
+                    handleCaption(data);
+                    break;
+                    
+                case "audio":
+                    await handleAudio(data);
+                    break;
+                    
+                case "own_caption":
+                    handleOwnCaption(data);
+                    break;
+                    
+                case "error":
+                    console.warn("⚠️ Server error:", data.message);
+                    break;
+                    
+                default:
+                    console.log("Unknown message type:", data);
+            }
+        } catch (e) {
+            console.log("Non-JSON message:", event.data);
+        }
+    };
+
     liveWs.onclose = () => {
         console.log("❌ Live translation socket closed");
-        
-        // 🆕 RESET THE UI BUTTON WHEN DISCONNECTED
         const btn = document.getElementById('startTranslationBtn');
         if (btn) {
             btn.innerText = '🌐 Not connected';
@@ -80,80 +118,92 @@ export function connectlivetranslation(identity = null) {
         }
     };
 
-    liveWs.onmessage = async (event) => {
-        try {
-            const data = JSON.parse(event.data);
-
-            if (data.type === "translation") {
-                // Speech FROM the other participant, translated FOR me
-                updateTranslationPanel(data.from_role, data.original_text, data.translated_text);
-                await playTranslatedAudio(data.audio_url);
-            }
-
-            if (data.type === "own_transcript") {
-                // My own speech, echoed back as a caption on my own panel
-                updateOwnCaption(data.original_text);
-            }
-        } catch (e) {
-            console.log("Live translation message (non-JSON):", event.data);
-        }
-    };
-
-    liveWs.onclose = () => {
-        console.log("❌ Live translation socket closed");
-    };
-
     liveWs.onerror = (err) => {
         console.error("❌ Live translation socket error:", err);
     };
 }
 
-export function disconnectlivetranslation() {
-    if (liveWs) {
-        liveWs.close();
-        liveWs = null;
+// ------------------------------------------
+// 📋 HANDLE ROSTER UPDATES
+// ------------------------------------------
+function handleRoster(participants) {
+    console.log("👥 Roster update:", participants);
+    
+    const me = _myIdentity;
+    const others = participants.filter(p => 
+        !(p.name === me.name && p.language === me.language)
+    );
+    
+    const theirLabel = document.getElementById('theirPanelLabel');
+    const theirPlaceholderText = document.querySelector('#theirPlaceholder .video-placeholder-text');
+    
+    if (others.length === 0) {
+        if (theirLabel) theirLabel.innerText = 'Other participant';
+        if (theirPlaceholderText) theirPlaceholderText.innerText = 'Waiting for participant...';
+    } else {
+        const other = others[0];
+        const label = other.title ? `${other.name} (${other.title})` : other.name;
+        if (theirLabel) theirLabel.innerText = `${label} — ${other.language}`;
+        if (theirPlaceholderText) theirPlaceholderText.innerText = `${other.name} joined`;
+    }
+    
+    // Dispatch custom event for main.js
+    window.dispatchEvent(new CustomEvent('live-translation-roster', { 
+        detail: participants 
+    }));
+}
+
+// ------------------------------------------
+// 💬 HANDLE CAPTIONS (from other participants)
+// ------------------------------------------
+function handleCaption(data) {
+    const theirPanel = document.getElementById('theirTranslation');
+    if (!theirPanel) return;
+    
+    const origEl = theirPanel.querySelector('.original-text');
+    const transEl = theirPanel.querySelector('.translated-text');
+    const nameEl = theirPanel.querySelector('.participant-name');
+    
+    if (origEl) origEl.textContent = data.original_text;
+    if (transEl) transEl.textContent = data.translated_text;
+    if (nameEl) {
+        const speakerLabel = data.from_title 
+            ? `${data.from_name} (${data.from_title})` 
+            : data.from_name;
+        nameEl.textContent = speakerLabel;
     }
 }
 
 // ------------------------------------------
-// UI updates — uses the existing #hrTranslation / #candidateTranslation panels
+// 🔊 HANDLE AUDIO PLAYBACK
 // ------------------------------------------
-function updateTranslationPanel(fromRole, originalText, translatedText) {
-    // The panel showing the OTHER person's speech (translated for me)
-    const panelId = fromRole === "interviewer" ? "hrTranslation" : "candidateTranslation";
-    const panel = document.getElementById(panelId);
-    if (!panel) return;
-
-    const origEl = panel.querySelector('.original-text');
-    const transEl = panel.querySelector('.translated-text');
-    if (origEl) origEl.textContent = originalText;
-    if (transEl) transEl.textContent = translatedText;
-}
-
-function updateOwnCaption(originalText) {
-    const myPanelId = MY_ROLE === "interviewer" ? "hrTranslation" : "candidateTranslation";
-    const panel = document.getElementById(myPanelId);
-    if (!panel) return;
-
-    const origEl = panel.querySelector('.original-text');
-    if (origEl) origEl.textContent = originalText;
-}
-
-// ------------------------------------------
-// Audio playback for translated speech
-// ------------------------------------------
-async function playTranslatedAudio(url) {
+async function handleAudio(data) {
     try {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const response = await fetch(url);
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+        
+        const response = await fetch(data.audio_url);
+        if (!response.ok) {
+            console.warn("⚠️ Audio fetch failed:", response.status);
+            return;
+        }
+        
         const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength === 0) {
+            console.warn("⚠️ Empty audio file");
+            return;
+        }
+        
         const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(audioCtx.destination);
         source.start(0);
-
+        
         return new Promise((resolve) => {
             source.onended = resolve;
         });
@@ -163,23 +213,59 @@ async function playTranslatedAudio(url) {
 }
 
 // ------------------------------------------
-// Microphone recording — records until stopped, sends full blob (pause-based)
+// 🎤 HANDLE OWN CAPTIONS (echoed back)
+// ------------------------------------------
+function handleOwnCaption(data) {
+    const myPanel = document.getElementById('myTranslation');
+    if (!myPanel) return;
+    
+    const origEl = myPanel.querySelector('.original-text');
+    if (origEl) origEl.textContent = data.original_text;
+}
+
+// ------------------------------------------
+// 🔌 DISCONNECT
+// ------------------------------------------
+export function disconnectLiveTranslation() {
+    if (liveWs) {
+        liveWs.close();
+        liveWs = null;
+    }
+    if (liveMediaRecorder && isLiveRecording) {
+        liveMediaRecorder.stop();
+    }
+}
+
+// ------------------------------------------
+// 🎙️ MICROPHONE RECORDING
 // ------------------------------------------
 export async function startLiveRecording() {
     if (isLiveRecording) return;
+    
+    if (!liveWs || liveWs.readyState !== WebSocket.OPEN) {
+        alert("⚠️ Please connect to the room first!");
+        return false;
+    }
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         alert('Your browser does not support microphone access.');
-        return;
+        return false;
     }
 
     try {
         const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+            audio: { 
+                echoCancellation: true, 
+                noiseSuppression: true, 
+                channelCount: 1,
+                sampleRate: 48000
+            }
         });
 
         liveAudioChunks = [];
-        liveMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        liveMediaRecorder = new MediaRecorder(stream, { 
+            mimeType: 'audio/webm;codecs=opus' 
+        });
 
         liveMediaRecorder.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
@@ -194,12 +280,13 @@ export async function startLiveRecording() {
             if (liveAudioChunks.length === 0) return;
 
             const blob = new Blob(liveAudioChunks, { type: 'audio/webm;codecs=opus' });
+            console.log(`🚀 Sending audio (${blob.size} bytes)...`);
 
             if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+                // 🆕 Send RAW BYTES (not JSON) — matches backend's data["bytes"]
                 liveWs.send(blob);
-                console.log(`🚀 Sent live audio (${blob.size} bytes) as "${MY_ROLE}"`);
             } else {
-                console.warn("⚠️ Live translation socket not open — audio not sent.");
+                console.warn("⚠️ Socket not open — audio not sent.");
             }
         };
 
@@ -218,8 +305,4 @@ export function stopLiveRecording() {
     if (liveMediaRecorder && isLiveRecording) {
         liveMediaRecorder.stop();
     }
-}
-
-export function isCurrentlyRecording() {
-    return isLiveRecording;
 }
