@@ -444,3 +444,62 @@ button:disabled {
     0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 75, 43, 0.7); }
     50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 75, 43, 0); }
 }
+/* ========================================== */
+/* JOIN SCREEN OVERLAY (Zoom-style entry form) */
+/* ========================================== */
+.join-screen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.join-screen-overlay.hidden { display: none; }
+
+.join-screen-card {
+  background: white;
+  border-radius: 16px;
+  padding: 32px;
+  width: 360px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.join-screen-card h2 {
+  margin: 0 0 4px 0;
+  font-size: 20px;
+}
+
+.join-screen-subtitle {
+  margin: 0 0 16px 0;
+  font-size: 13px;
+  color: #666;
+}
+
+.join-screen-card label {
+  font-size: 13px;
+  font-weight: bold;
+  margin-top: 10px;
+  color: #333;
+}
+
+.join-screen-card input[type="text"],
+.join-screen-card select {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.15);
+  font-size: 14px;
+  outline: none;
+}
+
+.join-btn {
+  margin-top: 20px;
+  padding: 12px;
+  font-size: 15px;
+}

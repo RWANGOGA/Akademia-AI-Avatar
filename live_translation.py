@@ -15,25 +15,85 @@ except ImportError:
 router = APIRouter()
 
 # ==========================================
-# ROOM MANAGEMENT — pairs Interviewer + Candidate per room_id
+# ROOM MANAGEMENT
+# Each participant joins with their OWN chosen name, title, and language
+# (like entering your name on a Zoom join screen) — nothing is hardcoded
+# to a fixed "interviewer" or "candidate" role anymore. The backend
+# translates whatever a speaker says into every OTHER participant's own
+# chosen language, dynamically.
 # ==========================================
+
+# Maps a spoken/target language name to an Edge-TTS voice.
+# Add more entries here to support additional languages.
+LANGUAGE_VOICES = {
+    "English": "en-US-AriaNeural",
+    "Japanese": "ja-JP-NanamiNeural",
+    "French": "fr-FR-DeniseNeural",
+    "Spanish": "es-ES-ElviraNeural",
+    "German": "de-DE-KatjaNeural",
+    "Chinese": "zh-CN-XiaoxiaoNeural",
+    "Korean": "ko-KR-SunHiNeural",
+    "Arabic": "ar-SA-ZariyahNeural",
+    "Swahili": "sw-KE-ZuriNeural",
+    "Luganda": "en-US-AriaNeural",  # fallback — Edge-TTS has no native Luganda voice
+}
+
+DEFAULT_VOICE = "en-US-AriaNeural"
+
+
+def voice_for_language(language: str) -> str:
+    return LANGUAGE_VOICES.get(language, DEFAULT_VOICE)
+
+
+class Participant:
+    def __init__(self, websocket: WebSocket, name: str, title: str, language: str):
+        self.websocket = websocket
+        self.name = name
+        self.title = title
+        self.language = language
+        self.last_sentence = ""  # used as translation context for this speaker
+
+
 class TranslationRoom:
     def __init__(self):
-        self.connections: dict[str, WebSocket] = {}  # role -> websocket
+        self.participants: dict[str, Participant] = {}  # participant_id -> Participant
 
-    async def connect(self, role: str, websocket: WebSocket):
+    async def join(self, participant_id: str, websocket: WebSocket, name: str, title: str, language: str):
         await websocket.accept()
-        self.connections[role] = websocket
-        print(f"🟢 [{role}] joined the live translation room")
+        self.participants[participant_id] = Participant(websocket, name, title, language)
+        print(f"🟢 \"{name}\" ({title}, speaks {language}) joined the room")
+        await self.broadcast_roster()
 
-    def disconnect(self, role: str):
-        self.connections.pop(role, None)
-        print(f"🔴 [{role}] left the live translation room")
+    def leave(self, participant_id: str):
+        participant = self.participants.pop(participant_id, None)
+        if participant:
+            print(f"🔴 \"{participant.name}\" left the room")
 
-    async def send_to(self, role: str, payload: dict):
-        ws = self.connections.get(role)
-        if ws:
-            await ws.send_text(json.dumps(payload))
+    def get(self, participant_id: str) -> Participant | None:
+        return self.participants.get(participant_id)
+
+    def others(self, participant_id: str):
+        return {pid: p for pid, p in self.participants.items() if pid != participant_id}
+
+    async def send_to(self, participant_id: str, payload: dict):
+        participant = self.participants.get(participant_id)
+        if participant:
+            await participant.websocket.send_text(json.dumps(payload))
+
+    async def broadcast_roster(self):
+        """Let everyone know who's currently in the room and what language they speak."""
+        roster = [
+            {"name": p.name, "title": p.title, "language": p.language}
+            for p in self.participants.values()
+        ]
+        for participant in self.participants.values():
+            try:
+                await participant.websocket.send_text(json.dumps({
+                    "type": "roster",
+                    "participants": roster,
+                }))
+            except Exception:
+                pass
 
 
 rooms: dict[str, TranslationRoom] = {}
@@ -43,21 +103,6 @@ def get_room(room_id: str) -> TranslationRoom:
     if room_id not in rooms:
         rooms[room_id] = TranslationRoom()
     return rooms[room_id]
-
-
-# Speaker role -> spoken language / target party / target language / TTS voice
-ROLE_LANGUAGE = {
-    "interviewer": {
-        "target_role": "candidate",
-        "target_lang": "Japanese",
-        "voice": "ja-JP-NanamiNeural",
-    },
-    "candidate": {
-        "target_role": "interviewer",
-        "target_lang": "English",
-        "voice": "en-US-AriaNeural",
-    },
-}
 
 
 def normalize_audio(raw_bytes: bytes) -> bytes:
@@ -80,16 +125,24 @@ def transcribe(audio_bytes: bytes) -> str:
     transcript = groq_stt_client.audio.transcriptions.create(
         model="whisper-large-v3",
         file=audio_file,
-        prompt="Live interview conversation."
+        prompt="Live conversation between people speaking different languages."
     )
     return transcript.text.strip()
 
 
-def translate(text: str, target_lang: str) -> str:
+def translate(text: str, target_lang: str, previous_sentence: str = "") -> str:
     client, model_name = get_llm_client("nvidia/meta/llama-3.1-70b-instruct")
+
+    context_line = (
+        f"For context only, the speaker's previous sentence was: \"{previous_sentence}\". "
+        f"Use it only to resolve pronouns or references in the new sentence — do not translate it again.\n"
+        if previous_sentence else ""
+    )
+
     system_instruction = (
         f"You are a professional simultaneous interpreter. "
         f"Translate the following spoken text EXACTLY and FAITHFULLY into {target_lang}. "
+        f"{context_line}"
         f"Do not answer it, comment on it, explain it, or add anything. "
         f"Output ONLY the translated text, nothing else."
     )
@@ -108,14 +161,31 @@ async def generate_tts(text: str, voice: str, path: str):
     await communicate.save(path)
 
 
-@router.websocket("/live_translation/{room_id}/{role}")
-async def live_translation_endpoint(websocket: WebSocket, room_id: str, role: str):
-    if role not in ROLE_LANGUAGE:
+@router.websocket("/live_translation/{room_id}/{participant_id}")
+async def live_translation_endpoint(websocket: WebSocket, room_id: str, participant_id: str):
+    # The first message after connecting must be a JSON "join" packet
+    # carrying the participant's own chosen name, title, and language —
+    # equivalent to a Zoom join screen. Nothing is pre-decided server-side.
+    room = get_room(room_id)
+
+    await websocket.accept()
+    try:
+        first_message = await websocket.receive_json()
+    except Exception:
         await websocket.close(code=1008)
         return
 
-    room = get_room(room_id)
-    await room.connect(role, websocket)
+    if first_message.get("type") != "join":
+        await websocket.close(code=1008)
+        return
+
+    name = (first_message.get("name") or "Guest").strip()[:60]
+    title = (first_message.get("title") or "").strip()[:60]
+    language = (first_message.get("language") or "English").strip()
+
+    room.participants[participant_id] = Participant(websocket, name, title, language)
+    print(f"🟢 \"{name}\" ({title or 'no title'}, speaks {language}) joined room \"{room_id}\"")
+    await room.broadcast_roster()
 
     try:
         while True:
@@ -126,11 +196,12 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, role: st
 
             if "bytes" in data:
                 raw_audio = data["bytes"]
-                config = ROLE_LANGUAGE[role]
-                target_role = config["target_role"]
+                speaker = room.get(participant_id)
+                if not speaker:
+                    continue
 
                 try:
-                    print(f"🎤 [{role}] Received audio chunk ({len(raw_audio)} bytes)...")
+                    print(f"🎤 [{speaker.name}] Received audio chunk ({len(raw_audio)} bytes)...")
                     normalized = normalize_audio(raw_audio)
 
                     spoken_text = transcribe(normalized)
@@ -138,34 +209,66 @@ async def live_translation_endpoint(websocket: WebSocket, room_id: str, role: st
                         print("🤫 Empty/too short, skipping.")
                         continue
 
-                    print(f"📝 [{role}] said: {spoken_text}")
+                    print(f"📝 [{speaker.name}] said: {spoken_text}")
 
-                    translated_text = translate(spoken_text, config["target_lang"])
-                    print(f"🌐 Translated for {target_role}: {translated_text}")
+                    # Translate into EVERY other participant's own chosen
+                    # language — not a single fixed counterpart language.
+                    other_participants = room.others(participant_id)
 
-                    # Unique filename avoids collisions between simultaneous speakers
-                    audio_filename = f"{uuid.uuid4().hex}.mp3"
-                    audio_path = f"static/{audio_filename}"
-                    await generate_tts(translated_text, config["voice"], audio_path)
+                    if not other_participants:
+                        # No one else in the room yet to translate for
+                        speaker.last_sentence = spoken_text
+                        continue
 
-                    payload = {
-                        "type": "translation",
-                        "original_text": spoken_text,
-                        "translated_text": translated_text,
-                        "audio_url": f"http://localhost:8000/translation_audio/{audio_filename}",
-                        "from_role": role,
-                    }
+                    for other_id, other in other_participants.items():
+                        translated_text = translate(
+                            spoken_text,
+                            other.language,
+                            speaker.last_sentence,
+                        )
+                        print(f"🌐 For {other.name} ({other.language}): {translated_text}")
 
-                    # Send translated speech to the OTHER participant
-                    await room.send_to(target_role, payload)
+                        # STEP 1 — caption arrives instantly
+                        await room.send_to(other_id, {
+                            "type": "caption",
+                            "original_text": spoken_text,
+                            "translated_text": translated_text,
+                            "from_name": speaker.name,
+                            "from_title": speaker.title,
+                        })
+
+                        # STEP 2 — audio generated and sent after, so the
+                        # listener already has text on screen while this
+                        # ~0.5-1s step runs.
+                        audio_filename = f"{uuid.uuid4().hex}.mp3"
+                        audio_path = f"static/{audio_filename}"
+                        await generate_tts(translated_text, voice_for_language(other.language), audio_path)
+
+                        await room.send_to(other_id, {
+                            "type": "audio",
+                            "audio_url": f"http://localhost:8000/translation_audio/{audio_filename}",
+                            "from_name": speaker.name,
+                        })
+
                     # Echo the original caption back to the speaker themselves
-                    await room.send_to(role, {**payload, "type": "own_transcript"})
+                    await room.send_to(participant_id, {
+                        "type": "own_caption",
+                        "original_text": spoken_text,
+                    })
+
+                    speaker.last_sentence = spoken_text
 
                 except Exception as e:
                     print(f"❌ Live translation pipeline error: {e}")
+                    for other_id in room.others(participant_id):
+                        await room.send_to(other_id, {
+                            "type": "error",
+                            "message": "Translation failed for the last message. Please try speaking again.",
+                        })
                     continue
 
     except WebSocketDisconnect:
-        print(f"🔴 [{role}] disconnected from room {room_id}")
+        print(f"🔴 Participant disconnected from room {room_id}")
     finally:
-        room.disconnect(role)
+        room.leave(participant_id)
+        await room.broadcast_roster()

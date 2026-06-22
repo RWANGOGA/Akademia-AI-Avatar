@@ -3,13 +3,26 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import './style.css'; 
 import {
-    connectLiveTranslation,
-    disconnectLiveTranslation,
-    startLiveRecording,
-    stopLiveRecording,
-    isCurrentlyRecording,
-    getMyRole
-} from './liveTranslation.js';
+    connectlivetranslation,
+    disconnectlivetranslation,
+    startListening,
+    stopListening,
+    isCurrentlyListening,
+    hasJoinedRoom,
+    getMyIdentity
+} from './livetranslation.js';
+
+// ==========================================
+// 🆔 SESSION ID — isolates this browser tab's avatar chat history
+// from every other user's, fixing the old shared-global-history bug.
+// ==========================================
+const SESSION_ID = (() => {
+    const existing = sessionStorage.getItem('avatar_session_id');
+    if (existing) return existing;
+    const fresh = crypto.randomUUID();
+    sessionStorage.setItem('avatar_session_id', fresh);
+    return fresh;
+})();
 
 // ==========================================
 // 🔄 MODE SWITCHING LOGIC
@@ -36,12 +49,75 @@ liveModeBtn.addEventListener('click', async () => {
     avatarMode.classList.remove('active');
     if (oldModeToggle) oldModeToggle.classList.add('hidden');
     console.log('📹 Switched to Live Communication Mode');
-    
+
     if (!localStream) {
         await initializeLiveMode();
     }
 
-    connectLiveTranslation();
+    if (!hasJoinedRoom()) {
+        showJoinScreen();
+    }
+});
+
+// ==========================================
+// 🪪 JOIN SCREEN — each participant freely picks their own name, title,
+// and language before entering the room, like a Zoom join screen.
+// Nothing is pre-decided by a fixed "interviewer" or "candidate" role.
+// ==========================================
+const joinScreenOverlay = document.getElementById('joinScreenOverlay');
+const joinNameInput = document.getElementById('joinNameInput');
+const joinTitleInput = document.getElementById('joinTitleInput');
+const joinLanguageSelect = document.getElementById('joinLanguageSelect');
+const joinRoomBtn = document.getElementById('joinRoomBtn');
+
+function showJoinScreen() {
+    if (joinScreenOverlay) joinScreenOverlay.classList.remove('hidden');
+}
+
+function hideJoinScreen() {
+    if (joinScreenOverlay) joinScreenOverlay.classList.add('hidden');
+}
+
+if (joinRoomBtn) {
+    joinRoomBtn.addEventListener('click', () => {
+        const name = (joinNameInput?.value || '').trim();
+        const title = (joinTitleInput?.value || '').trim();
+        const language = joinLanguageSelect?.value || 'English';
+
+        if (!name) {
+            alert('Please enter your name to join.');
+            return;
+        }
+
+        connectlivetranslation({ name, title, language });
+        hideJoinScreen();
+
+        const myLabel = document.getElementById('myPanelLabel');
+        if (myLabel) myLabel.innerText = title ? `${name} (${title})` : name;
+
+        const myAvatar = document.getElementById('myAvatar');
+        if (myAvatar) myAvatar.innerText = '🙂';
+    });
+}
+
+// Update "their" panel label live as people join/leave the room
+window.addEventListener('live-translation-roster', (event) => {
+    const participants = event.detail || [];
+    const me = getMyIdentity();
+    const others = participants.filter(p => p.name !== me.name || p.language !== me.language);
+
+    const theirLabel = document.getElementById('theirPanelLabel');
+    const theirPlaceholderText = document.querySelector('#theirPlaceholder .video-placeholder-text');
+
+    if (others.length === 0) {
+        if (theirLabel) theirLabel.innerText = 'Other participant';
+        if (theirPlaceholderText) theirPlaceholderText.innerText = 'Waiting for participant...';
+    } else {
+        const other = others[0];
+        const label = other.title ? `${other.name} (${other.title})` : other.name;
+        if (theirLabel) theirLabel.innerText = `${label} — ${other.language}`;
+        if (theirPlaceholderText) theirPlaceholderText.innerText = `${other.name} joined`;
+    }
 });
 
 // ==========================================
@@ -65,14 +141,14 @@ async function initializeLiveMode() {
         });
         
         const localVideo = document.getElementById('localVideo');
-        const hrPlaceholder = document.getElementById('hrPlaceholder');
+        const myPlaceholder = document.getElementById('myPlaceholder');
         
         if (localVideo) {
             localVideo.srcObject = localStream;
             localVideo.onloadedmetadata = () => {
                 localVideo.play();
                 localVideo.style.display = 'block';
-                if (hrPlaceholder) hrPlaceholder.style.display = 'none';
+                if (myPlaceholder) myPlaceholder.style.display = 'none';
             };
         }
         
@@ -105,18 +181,16 @@ toggleCamBtn.addEventListener('click', () => {
     toggleCamBtn.innerText = isCamOff ? '📹 Turn On Camera' : '📹 Turn Off Camera';
     
     const localVideo = document.getElementById('localVideo');
-    const hrPlaceholder = document.getElementById('hrPlaceholder');
-    if (localVideo && hrPlaceholder) {
+    const myPlaceholder = document.getElementById('myPlaceholder');
+    if (localVideo && myPlaceholder) {
         localVideo.style.display = isCamOff ? 'none' : 'block';
-        hrPlaceholder.style.display = isCamOff ? 'flex' : 'none';
+        myPlaceholder.style.display = isCamOff ? 'flex' : 'none';
     }
 });
 
-startTranslationBtn.addEventListener('click', () => {
-    startTranslationBtn.innerText = '🌐 Translation Active';
-    startTranslationBtn.classList.add('active');
-    startTranslationBtn.disabled = true;
-});
+// startTranslationBtn no longer needs a manual click handler — its text
+// is now driven automatically by liveTranslation.js based on real
+// connection state (setConnectionStatus), not a fake toggle.
 
 endCallBtn.addEventListener('click', () => {
     if (localStream) {
@@ -124,17 +198,17 @@ endCallBtn.addEventListener('click', () => {
         localStream = null;
     }
     document.getElementById('localVideo').srcObject = null;
-    
-    const hrPlaceholder = document.getElementById('hrPlaceholder');
-    if (hrPlaceholder) hrPlaceholder.style.display = 'flex';
+
+    const myPlaceholder = document.getElementById('myPlaceholder');
+    if (myPlaceholder) myPlaceholder.style.display = 'flex';
     document.getElementById('localVideo').style.display = 'none';
-    
-    startTranslationBtn.innerText = '🌐 Start Live Translation';
+
+    startTranslationBtn.innerText = '🌐 Not connected';
     startTranslationBtn.classList.remove('active');
-    startTranslationBtn.disabled = false;
-    
-    disconnectLiveTranslation();
-    
+    startTranslationBtn.disabled = true;
+
+    disconnectlivetranslation();
+
     avatarModeBtn.click();
 });
 
@@ -188,6 +262,7 @@ async function submitAvatarAudio(blob) {
     formData.append('audio', blob, 'avatar_voice.webm');
     formData.append('persona', personaSelect.value || 'Tutor');
     formData.append('model_id', modelSelect.value || '');
+    formData.append('session_id', SESSION_ID);
 
     try {
         const response = await fetch('http://localhost:8000/ask_audio', {
@@ -354,7 +429,7 @@ async function playAudioSequentially(url) {
     return new Promise((resolve) => {
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(analyser);
+        source.connect(analyser)          g;
         analyser.connect(audioContext.destination);
         
         isSpeaking = true;
@@ -489,7 +564,7 @@ speakBtn.addEventListener('click', async () => {
       const response = await fetch('http://localhost:8000/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, persona: selectedPersona, model_id: selectedModel })
+        body: JSON.stringify({ text, persona: selectedPersona, model_id: selectedModel, session_id: SESSION_ID })
       });
       
       const data = await response.json();
@@ -579,20 +654,23 @@ mode2dBtn.addEventListener('click', () => {
 
 // ==========================================
 // 🎙️ LIVE MODE - START INTERVIEW BUTTON (now backed by liveTranslation.js)
+// Toggles continuous listening with automatic silence-based sentence
+// detection — no manual "stop" needed per sentence, only to end the
+// session entirely.
 // ==========================================
 const micBtn = document.getElementById('micBtn');
 
 if (micBtn) {
     micBtn.addEventListener('click', async () => {
-        if (!isCurrentlyRecording()) {
-            const success = await startLiveRecording();
+        if (!isCurrentlyListening()) {
+            const success = await startListening();
             if (success) {
-                micBtn.innerText = '🛑 Stop & Submit';
+                micBtn.innerText = '🛑 Stop Listening';
                 micBtn.classList.add('danger');
                 micBtn.classList.remove('primary');
             }
         } else {
-            stopLiveRecording();
+            stopListening();
             micBtn.innerText = '🎙️ Start Interview';
             micBtn.classList.add('primary');
             micBtn.classList.remove('danger');

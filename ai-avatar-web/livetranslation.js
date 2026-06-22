@@ -9,6 +9,9 @@ let liveMediaRecorder = null;
 let liveAudioChunks = [];
 let isLiveRecording = false;
 
+// 🆕 IDENTITY TRACKING (Required by main.js)
+let _myIdentity = { name: '', title: '', language: 'English' };
+
 // Read role + room from the URL, e.g.:
 //   index.html?role=interviewer&room=room1   (HR's device)
 //   index.html?role=candidate&room=room1     (Candidate's device)
@@ -24,18 +27,57 @@ export function getRoomId() {
     return ROOM_ID;
 }
 
+// 🆕 MISSING EXPORTS REQUIRED BY MAIN.JS
+export function getMyIdentity() {
+    return _myIdentity;
+}
+
+export function hasJoinedRoom() {
+    return liveWs !== null && liveWs.readyState === WebSocket.OPEN;
+}
+
+// Aliases so main.js can use startListening/stopListening instead of startLiveRecording
+export const startListening = startLiveRecording;
+export const stopListening = stopLiveRecording;
+export const isCurrentlyListening = isCurrentlyRecording;
+
 // ------------------------------------------
 // Connect to the backend live_translation websocket
 // ------------------------------------------
-export function connectLiveTranslation() {
+// 🆕 UPDATED to accept the identity object from the Join Screen
+export function connectlivetranslation(identity = null) {
+    if (identity) {
+        _myIdentity = { ..._myIdentity, ...identity };
+    }
+
     if (liveWs && (liveWs.readyState === WebSocket.OPEN || liveWs.readyState === WebSocket.CONNECTING)) {
         return; // already connected / connecting
     }
 
     liveWs = new WebSocket(`ws://localhost:8000/live_translation/${ROOM_ID}/${MY_ROLE}`);
 
-    liveWs.onopen = () => {
+        liveWs.onopen = () => {
         console.log(`✅ Live translation connected — room "${ROOM_ID}" as "${MY_ROLE}"`);
+        
+        // 🆕 UPDATE THE UI BUTTON WHEN CONNECTED
+        const btn = document.getElementById('startTranslationBtn');
+        if (btn) {
+            btn.innerText = '🌐 Connected';
+            btn.classList.add('active');
+            btn.disabled = false;
+        }
+    };
+
+    liveWs.onclose = () => {
+        console.log("❌ Live translation socket closed");
+        
+        // 🆕 RESET THE UI BUTTON WHEN DISCONNECTED
+        const btn = document.getElementById('startTranslationBtn');
+        if (btn) {
+            btn.innerText = '🌐 Not connected';
+            btn.classList.remove('active');
+            btn.disabled = true;
+        }
     };
 
     liveWs.onmessage = async (event) => {
@@ -66,7 +108,7 @@ export function connectLiveTranslation() {
     };
 }
 
-export function disconnectLiveTranslation() {
+export function disconnectlivetranslation() {
     if (liveWs) {
         liveWs.close();
         liveWs = null;

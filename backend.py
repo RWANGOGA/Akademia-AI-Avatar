@@ -1,9 +1,7 @@
-import asyncio
-import base64
 import json
 import os
 import io
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, Form
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -79,19 +77,52 @@ async def get_available_models():
     }
 
 # ==========================================
-# CONVERSATION MEMORY
+# CONVERSATION MEMORY (PER-SESSION)
 # ==========================================
-conversation_history = [
-    {
-        "role": "system",
-        "content": "You are a helpful AI avatar. CRITICAL RULE: You must ALWAYS answer in clear, simple English, regardless of what language the user speaks to you."
-    }
-]
+# Each browser tab/user gets its own isolated conversation history,
+# keyed by a session_id generated on the frontend (e.g. crypto.randomUUID()).
+# This replaces the old single global list that mixed everyone's chats together.
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful AI avatar. CRITICAL RULE: You must ALWAYS answer in "
+    "clear, simple English, regardless of what language the user speaks to you."
+)
+
+session_histories: dict[str, list[dict]] = {}
+
+# Simple cap so abandoned sessions don't grow forever in memory
+MAX_SESSIONS = 500
+MAX_HISTORY_MESSAGES = 30  # system + last N turns
+
+
+def get_session_history(session_id: str) -> list[dict]:
+    """Fetch (or create) the conversation history for a given session_id."""
+    if session_id not in session_histories:
+        # Basic eviction: if we're at capacity, drop the oldest session.
+        if len(session_histories) >= MAX_SESSIONS:
+            oldest_key = next(iter(session_histories))
+            del session_histories[oldest_key]
+            print(f"🧹 Evicted oldest session ({oldest_key}) to free memory.")
+
+        session_histories[session_id] = [
+            {"role": "system", "content": DEFAULT_SYSTEM_PROMPT}
+        ]
+        print(f"🆕 Created new conversation history for session {session_id}")
+
+    return session_histories[session_id]
+
+
+def trim_history(history: list[dict]) -> list[dict]:
+    """Keep the system prompt + the most recent messages only, to bound token usage."""
+    if len(history) <= MAX_HISTORY_MESSAGES:
+        return history
+    return [history[0]] + history[-(MAX_HISTORY_MESSAGES - 1):]
+
 
 class AskRequest(BaseModel):
     text: str
     persona: str = "Tutor"
     model_id: str = None
+    session_id: str = "default"  # frontend should always send a real UUID
 
 # ==========================================
 # 🧠 3. ENDPOINT: Text Chat Ask Route
@@ -99,7 +130,8 @@ class AskRequest(BaseModel):
 @app.post("/ask")
 async def ask_avatar(request: AskRequest):
     user_text = request.text
-    print(f"🧠 User asked: {user_text}")
+    session_id = request.session_id or "default"
+    print(f"🧠 [{session_id}] User asked: {user_text}")
 
     personas = {
         "Tutor": "You are a Friendly, Patient AI Tutor. Use simple words, be encouraging, and use emojis occasionally. CRITICAL RULE: You must ALWAYS answer in clear, simple English.",
@@ -108,10 +140,13 @@ async def ask_avatar(request: AskRequest):
     }
 
     selected_persona = personas.get(request.persona, personas["Tutor"])
-    conversation_history[0] = {"role": "system", "content": selected_persona}
-    print(f"🎭 Avatar is now acting as: {request.persona}")
 
-    conversation_history.append({"role": "user", "content": user_text})
+    history = get_session_history(session_id)
+    history[0] = {"role": "system", "content": selected_persona}
+    print(f"🎭 [{session_id}] Avatar is now acting as: {request.persona}")
+
+    history.append({"role": "user", "content": user_text})
+    history[:] = trim_history(history)
 
     selected_model = request.model_id or MODELS_CONFIG["default_model"]
     client, model_name = get_llm_client(selected_model)
@@ -120,12 +155,13 @@ async def ask_avatar(request: AskRequest):
     try:
         response_en = client.chat.completions.create(
             model=model_name,
-            messages=conversation_history
+            messages=history
         )
         text_en = response_en.choices[0].message.content
         print(f"✅ English Answer: {text_en}")
 
-        conversation_history.append({"role": "assistant", "content": text_en})
+        history.append({"role": "assistant", "content": text_en})
+        history[:] = trim_history(history)
 
         response_ja = client.chat.completions.create(
             model=model_name,
@@ -144,7 +180,7 @@ async def ask_avatar(request: AskRequest):
     for attempt in range(3):
         try:
             communicate_en = edge_tts.Communicate(text_en, "en-US-AriaNeural")
-            await communicate_en.save("static/avatar_reply_en.mp3")
+            await communicate_en.save(f"static/avatar_reply_en_{session_id}.mp3")
             print("🔊 English audio generated!")
             break
         except Exception as e:
@@ -155,7 +191,7 @@ async def ask_avatar(request: AskRequest):
     for attempt in range(3):
         try:
             communicate_ja = edge_tts.Communicate(text_ja, "ja-JP-NanamiNeural")
-            await communicate_ja.save("static/avatar_reply_ja.mp3")
+            await communicate_ja.save(f"static/avatar_reply_ja_{session_id}.mp3")
             print("🔊 Japanese audio generated!")
             break
         except Exception as e:
@@ -166,15 +202,16 @@ async def ask_avatar(request: AskRequest):
     return {
         "text_en": text_en,
         "text_ja": text_ja,
-        "audio_url_en": "http://localhost:8000/audio_en",
-        "audio_url_ja": "http://localhost:8000/audio_ja"
+        "audio_url_en": f"http://localhost:8000/audio_en/{session_id}",
+        "audio_url_ja": f"http://localhost:8000/audio_ja/{session_id}"
     }
 
 @app.post("/ask_audio")
 async def ask_avatar_audio(
     audio: UploadFile = File(...),
     persona: str = Form("Tutor"),
-    model_id: Optional[str] = Form(None)
+    model_id: Optional[str] = Form(None),
+    session_id: str = Form("default")
 ):
     transcription_result = await transcribe_audio(audio)
     if transcription_result.get("error"):
@@ -184,7 +221,7 @@ async def ask_avatar_audio(
     if not transcribed_text:
         return {"error": "Audio transcription returned no text."}
 
-    ask_request = AskRequest(text=transcribed_text, persona=persona, model_id=model_id)
+    ask_request = AskRequest(text=transcribed_text, persona=persona, model_id=model_id, session_id=session_id)
     response = await ask_avatar(ask_request)
     response["transcribed_text"] = transcribed_text
     return response
@@ -192,21 +229,13 @@ async def ask_avatar_audio(
 # ==========================================
 # 🧠 4. AUDIO STREAM SERVERS (STATIC READS)
 # ==========================================
-@app.get("/audio_en")
-async def get_audio_en():
-    return FileResponse("static/avatar_reply_en.mp3", media_type="audio/mpeg")
+@app.get("/audio_en/{session_id}")
+async def get_audio_en(session_id: str):
+    return FileResponse(f"static/avatar_reply_en_{session_id}.mp3", media_type="audio/mpeg")
 
-@app.get("/audio_ja")
-async def get_audio_ja():
-    return FileResponse("static/avatar_reply_ja.mp3", media_type="audio/mpeg")
-
-@app.get("/interview_audio_en")
-async def get_interview_audio_en():
-    return FileResponse("static/interview_reply_en.mp3", media_type="audio/mpeg")
-
-@app.get("/interview_audio_ja")
-async def get_interview_audio_ja():
-    return FileResponse("static/interview_reply_ja.mp3", media_type="audio/mpeg")
+@app.get("/audio_ja/{session_id}")
+async def get_audio_ja(session_id: str):
+    return FileResponse(f"static/avatar_reply_ja_{session_id}.mp3", media_type="audio/mpeg")
 
 # 🌐 NEW: serves the per-message audio files generated by live_translation.py
 @app.get("/translation_audio/{filename}")
@@ -219,11 +248,13 @@ async def get_translation_audio(filename: str):
 @app.post("/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...)):
     print(f"📁 Received audio file: {audio.filename}")
-    file_path = f"static/{audio.filename}"
 
     audio_content = await audio.read()
-    with open(file_path, "wb") as f:
-        f.write(audio_content)
+    # No longer written to disk under the raw uploaded filename — two
+    # simultaneous uploads with the same name (e.g. both browsers sending
+    # "avatar_voice.webm") used to silently overwrite each other on disk.
+    # Everything below already works directly from the in-memory bytes,
+    # so the disk write was unnecessary I/O as well as a collision risk.
 
     try:
         normalized_bytes = audio_content
@@ -264,167 +295,12 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         return {"error": f"Transcription failed: {str(e)}"}
 
 # ==========================================
-# 🧠 6. CONNECTION MANAGER FOR AVATAR-CHAT WEBSOCKET
+# NOTE: The old /interview_room/{client_id} websocket and its
+# ConnectionManager have been removed. That route was fully replaced by:
+#   - /ask_audio (Avatar Chat voice messages, now session-isolated)
+#   - /live_translation/{room_id}/{role} (the new live interpreter feature)
+# It also still wrote to shared filenames (static/interview_reply_en.mp3 /
+# interview_reply_ja.mp3), which reintroduced the same collision bug we
+# just fixed for /ask and /ask_audio. Removing it instead of patching it,
+# since nothing in the current frontend calls it anymore.
 # ==========================================
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        print("🟢 A user joined the interview room!")
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            print("🔴 A user left the interview room.")
-
-    async def broadcast(self, message: str):
-        for connection in self.active_connections[:]:
-            try:
-                await connection.send_text(message)
-            except Exception:
-                print("⚠️ Found a dead connection. Removing it automatically.")
-                self.disconnect(connection)
-
-manager = ConnectionManager()
-
-# ==========================================
-# 🌉 7. AVATAR CHAT WEBSOCKET (UNCHANGED — kept for backward compatibility)
-# ==========================================
-@app.websocket("/interview_room/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: int):
-    await manager.connect(websocket)
-
-    try:
-        while True:
-            data = await websocket.receive()
-            message_type = data.get("type")
-
-            if message_type == "websocket.disconnect":
-                print(f"🔴 Client #{client_id} sent disconnect event.")
-                break
-
-            if "text" in data:
-                print(f"📩 Received Text from Client {client_id}: {data['text']}")
-                await manager.broadcast(f"Client #{client_id} says: {data['text']}")
-                continue
-
-            if "bytes" in data:
-                complete_audio_bytes = data["bytes"]
-
-                try:
-                    print(f"🎤 Processing complete audio file ({len(complete_audio_bytes)} bytes)...")
-
-                    normalized_audio_bytes = complete_audio_bytes
-                    if PYDUB_AVAILABLE:
-                        try:
-                            audio_stream = io.BytesIO(complete_audio_bytes)
-                            audio_segment = AudioSegment.from_file(audio_stream)
-                            wav_io = io.BytesIO()
-                            audio_segment.export(wav_io, format="wav", parameters=["-ac", "1", "-ar", "16000"])
-                            normalized_audio_bytes = wav_io.getvalue()
-                            print("🎵 Normalization: Converted raw container stream to robust WAV format.")
-                        except Exception as conversion_error:
-                            print(f"⚠️ Automatic WAV conversion bypassed ({conversion_error}). Using baseline data.")
-
-                    spoken_text = ""
-
-                    if TRANSCRIPTION_PROVIDER == "groq":
-                        audio_file = io.BytesIO(normalized_audio_bytes)
-                        audio_file.name = "input.wav"
-                        transcript = groq_stt_client.audio.transcriptions.create(
-                            model="whisper-large-v3",
-                            file=audio_file,
-                            prompt="Technical interview conversation."
-                        )
-                        spoken_text = transcript.text.strip()
-                    else:
-                        for attempt in range(3):
-                            try:
-                                response_stt = google_native_client.models.generate_content(
-                                    model="gemini-2.0-flash",
-                                    contents=[
-                                        types.Part.from_bytes(data=normalized_audio_bytes, mime_type="audio/wav"),
-                                        "Accurately transcribe this audio."
-                                    ]
-                                )
-                                spoken_text = response_stt.text.strip() if response_stt.text else ""
-                                break
-                            except Exception as e:
-                                if "503" in str(e) and attempt < 2:
-                                    await asyncio.sleep(1)
-                                    continue
-                                raise e
-
-                    if not spoken_text or len(spoken_text) < 2:
-                        print("🤫 Stream evaluated as empty. Dropping.")
-                        continue
-
-                    print(f"📝 Full Sentence Transcribed: {spoken_text}")
-
-                    client, model_name = get_llm_client("nvidia/meta/llama-3.1-70b-instruct")
-
-                    system_instruction = (
-                        "You are an expert AI Interpreter and Interviewer. "
-                        "The user is speaking (possibly in Luganda, English, or another language). "
-                        "YOUR TASKS:\n"
-                        "1. Understand the user's intent and translate it into natural English.\n"
-                        "2. Formulate a helpful, professional response in English.\n"
-                        "3. Translate your English response into natural, polite, professional Japanese.\n"
-                        "CRITICAL: You MUST respond ONLY with a raw JSON object. Do not include markdown.\n"
-                        "Format: {'user_translation': 'English translation of user input', 'response_en': 'Your response in English', 'response_ja': 'Your response in Japanese'}"
-                    )
-
-                    combined_response = client.chat.completions.create(
-                        model=model_name,
-                        response_format={"type": "json_object"},
-                        messages=[
-                            {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": spoken_text}
-                        ]
-                    )
-
-                    raw_content = combined_response.choices[0].message.content.strip()
-                    parsed_payload = json.loads(raw_content)
-
-                    user_english_text = parsed_payload.get("user_translation", spoken_text)
-                    response_en = parsed_payload.get("response_en", "I understand.")
-                    response_ja = parsed_payload.get("response_ja", "わかりました。")
-
-                    print(f"🇬🇧 User Translation: {user_english_text}")
-                    print(f"🇬🇧 AI Response (EN): {response_en}")
-                    print(f"🇯🇵 AI Response (JA): {response_ja}")
-
-                    tts_path_en = "static/interview_reply_en.mp3"
-                    tts_path_ja = "static/interview_reply_ja.mp3"
-
-                    communicate_en = edge_tts.Communicate(response_en, "en-US-AriaNeural")
-                    await communicate_en.save(tts_path_en)
-
-                    communicate_ja = edge_tts.Communicate(response_ja, "ja-JP-NanamiNeural")
-                    await communicate_ja.save(tts_path_ja)
-
-                    response_payload = json.dumps({
-                        "type": "ai_response",
-                        "user_translation": user_english_text,
-                        "text_en": response_en,
-                        "text_ja": response_ja,
-                        "audio_url_en": "http://localhost:8000/interview_audio_en",
-                        "audio_url_ja": "http://localhost:8000/interview_audio_ja"
-                    })
-                    await websocket.send_text(response_payload)
-
-                except WebSocketDisconnect:
-                    print(f"🔴 Client #{client_id} disconnected during send.")
-                    break
-                except Exception as e:
-                    print(f"❌ AI Pipeline Error (Caught safely): {e}")
-                    continue
-
-    except WebSocketDisconnect:
-        print(f"🔴 Client #{client_id} disconnected normally.")
-
-    finally:
-        manager.disconnect(websocket)

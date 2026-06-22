@@ -58,70 +58,88 @@
             </div>
         </div>
     </div>
-
     <!-- ========================================== -->
-    <!-- MODE 2: LIVE COMMUNICATION (Zoom-Style) -->
-    <!-- ========================================== -->
-    <div id="liveMode" class="mode-container">
-        <!-- LEFT SIDE: Interviewer (HR) -->
-        <div class="participant-panel">
-            <div class="participant-label">🇯 Interviewer (HR)</div>
-            <div class="video-container" id="hrVideoContainer">
-                <div class="live-badge">LIVE</div>
-                <div class="video-placeholder" id="hrPlaceholder">
-                    <div class="video-placeholder-icon">🎥</div>
-                    <div class="video-placeholder-text">Camera Off</div>
-                </div>
-                <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
-                <div class="speaking-indicator" id="hrSpeakingIndicator">
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                </div>
-                <div class="participant-avatar-overlay" id="hrAvatar">🤖</div>
-            </div>
-            <div class="translation-display" id="hrTranslation">
-                <div class="original-text">Waiting for speech...</div>
-                <div class="translated-text"></div>
-            </div>
-        </div>
+<!-- LIVE TRANSLATION JOIN SCREEN (Zoom-style)  -->
+<!-- Shown before entering the live room.       -->
+<!-- ========================================== -->
+<div id="joinScreenOverlay" class="join-screen-overlay hidden">
+    <div class="join-screen-card">
+        <h2>Join live translation</h2>
+        <p class="join-screen-subtitle">Enter your details and choose the language you want to hear.</p>
 
-        <!-- RIGHT SIDE: Candidate (Employee) -->
-        <div class="participant-panel">
-            <div class="participant-label">🇺 Candidate (Employee)</div>
-            <div class="video-container" id="candidateVideoContainer">
-                <div class="video-placeholder" id="candidatePlaceholder">
-                    <div class="video-placeholder-icon">👤</div>
-                    <div class="video-placeholder-text">Waiting for candidate...</div>
-                </div>
-                <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
-                <div class="speaking-indicator" id="candidateSpeakingIndicator">
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                    <div class="wave-bar"></div>
-                </div>
-                <div class="participant-avatar-overlay" id="candidateAvatar">👨‍💼</div>
-            </div>
-            <div class="translation-display" id="candidateTranslation">
-                <div class="original-text">Waiting for speech...</div>
-                <div class="translated-text"></div>
-            </div>
-        </div>
+        <label for="joinNameInput">Your name</label>
+        <input type="text" id="joinNameInput" placeholder="e.g. Jonan" maxlength="60">
 
-        <!-- CONTROL BAR (Bottom) -->
-        <div class="live-controls">
-            <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
-            <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
-            <button type="button" id="startTranslationBtn" class="control-btn primary">🌐 Start Live Translation</button>
-            <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Interview</button>
-            <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
+        <label for="joinTitleInput">Your title (optional)</label>
+        <input type="text" id="joinTitleInput" placeholder="e.g. HR Interviewer, Candidate, Guest" maxlength="60">
+
+        <label for="joinLanguageSelect">Language you want to hear</label>
+        <select id="joinLanguageSelect">
+            <option value="English">English</option>
+            <option value="Japanese">Japanese</option>
+            <option value="French">French</option>
+            <option value="Spanish">Spanish</option>
+            <option value="German">German</option>
+            <option value="Chinese">Chinese</option>
+            <option value="Korean">Korean</option>
+            <option value="Arabic">Arabic</option>
+            <option value="Swahili">Swahili</option>
+            <option value="Luganda">Luganda</option>
+        </select>
+
+        <button type="button" id="joinRoomBtn" class="control-btn primary join-btn">Join Room</button>
+    </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODE 2: LIVE COMMUNICATION (Zoom-Style)     -->
+<!-- Panels are now generic "me" / "them" since   -->
+<!-- roles are no longer fixed interviewer/candidate -->
+<!-- ========================================== -->
+<div id="liveMode" class="mode-container">
+    <div class="participant-panel">
+        <div class="participant-label" id="myPanelLabel">You</div>
+        <div class="video-container" id="myVideoContainer">
+            <div class="live-badge">LIVE</div>
+            <div class="video-placeholder" id="myPlaceholder">
+                <div class="video-placeholder-icon">🎥</div>
+                <div class="video-placeholder-text">Camera Off</div>
+            </div>
+            <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
+            <div class="participant-avatar-overlay" id="myAvatar">🙂</div>
+        </div>
+        <div class="translation-display" id="myTranslation">
+            <div class="original-text">Waiting for speech...</div>
+            <div class="translated-text"></div>
         </div>
     </div>
 
+    <div class="participant-panel">
+        <div class="participant-label" id="theirPanelLabel">Other participant</div>
+        <div class="video-container" id="theirVideoContainer">
+            <div class="video-placeholder" id="theirPlaceholder">
+                <div class="video-placeholder-icon">👤</div>
+                <div class="video-placeholder-text">Waiting for participant...</div>
+            </div>
+            <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
+            <div class="participant-avatar-overlay" id="theirAvatar">👤</div>
+        </div>
+        <div class="translation-display" id="theirTranslation">
+            <div class="participant-name" style="font-weight:500; margin-bottom:4px;"></div>
+            <div class="original-text">Waiting for speech...</div>
+            <div class="translated-text"></div>
+        </div>
+    </div>
+
+    <div class="live-controls">
+        <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
+        <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
+        <button type="button" id="startTranslationBtn" class="control-btn primary" disabled>🌐 Not connected</button>
+        <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Interview</button>
+        <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
+    </div>
+</div>
+   
     <!-- OLD 3D/2D TOGGLE (Only visible in Avatar Mode) -->
     <div class="mode-toggle hidden">
         <span>Avatar Mode:</span>
