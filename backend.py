@@ -80,6 +80,25 @@ def ai_available() -> bool:
 EN_VOICE = "en-US-JennyNeural"
 JA_VOICE = "ja-JP-NanamiNeural"
 
+# A small, curated set of real Microsoft Edge-TTS neural voices. If any name
+# below turns out not to exist on your system's edge-tts version, run
+# `edge-tts --list-voices` in your terminal to see the exact names available
+# and swap them in here — this list is just data, not logic.
+VOICE_CATALOG = {
+    "en": [
+        {"name": "en-US-JennyNeural", "label": "Jenny — US, female"},
+        {"name": "en-US-AriaNeural",  "label": "Aria — US, female"},
+        {"name": "en-US-GuyNeural",   "label": "Guy — US, male"},
+        {"name": "en-US-DavisNeural", "label": "Davis — US, male"},
+        {"name": "en-GB-SoniaNeural", "label": "Sonia — UK, female"},
+        {"name": "en-GB-RyanNeural",  "label": "Ryan — UK, male"},
+    ],
+    "ja": [
+        {"name": "ja-JP-NanamiNeural", "label": "Nanami — Japanese, female"},
+        {"name": "ja-JP-KeitaNeural",  "label": "Keita — Japanese, male"},
+    ],
+}
+
 VOICE_MAP = {
     "en":          EN_VOICE,
     "en-US":       EN_VOICE,
@@ -102,12 +121,12 @@ def resolve_voice(name: str, culture: str) -> str:
 # ── Personas (the avatar's character) ──────────────────────────────────────
 PERSONAS = {
     "Tutor": {
-        "name": "Kwame",
+        "name": "Kwame",  # fallback if the frontend doesn't send a character_name
         "culture": "en",
         "background": "classroom",
         "voice": "en-US",
-        "system": (
-            "You are Kwame, a friendly, patient bilingual (English/Japanese) tutor. "
+        "system_template": (
+            "You are {name}, a friendly, patient bilingual (English/Japanese) tutor. "
             "Use clear, simple, encouraging language. Keep replies under 4 sentences."
         ),
     },
@@ -116,8 +135,8 @@ PERSONAS = {
         "culture": "en",
         "background": "office",
         "voice": "en-US",
-        "system": (
-            "You are Amara, a professional business assistant for bilingual communication. "
+        "system_template": (
+            "You are {name}, a professional business assistant for bilingual communication. "
             "Be concise, formal and factual. Keep replies under 4 sentences."
         ),
     },
@@ -126,8 +145,8 @@ PERSONAS = {
         "culture": "ja",
         "background": "lounge",
         "voice": "ja-JP",
-        "system": (
-            "You are Yuki, a warm, casual companion for everyday conversation. "
+        "system_template": (
+            "You are {name}, a warm, casual companion for everyday conversation. "
             "Speak naturally and warmly. Keep replies under 4 sentences."
         ),
     },
@@ -356,6 +375,9 @@ def next_audio_name(prefix: str) -> str:
 class AskRequest(BaseModel):
     text: str
     persona: str = "Tutor"
+    character_name: str = None
+    voice_en: str = None
+    voice_ja: str = None
 
 
 class TranslateRequest(BaseModel):
@@ -387,13 +409,19 @@ async def ask_avatar(request: AskRequest):
         return JSONResponse({"error": "Empty input"}, status_code=400)
 
     persona = PERSONAS.get(request.persona, PERSONAS["Tutor"])
+    character_name = (request.character_name or persona["name"]).strip() or persona["name"]
+    # The scenario (Tutor/Business/Casual) still drives personality, default
+    # background and voice — only the LLM's self-identification name changes,
+    # so whichever avatar is actually on screen is who it says it is, no
+    # matter which scenario you picked for it.
+    resolved_persona = {**persona, "system": persona["system_template"].format(name=character_name)}
 
     # Normalize input to English for the brain.
     user_for_ai = user_text
     if is_japanese(user_text):
         user_for_ai = await translate_to_english(user_text)
 
-    behavior = await think(user_for_ai, persona, conversation_history)
+    behavior = await think(user_for_ai, resolved_persona, conversation_history)
     reply_en = behavior["reply"]
 
     conversation_history.append({"role": "user", "content": user_for_ai})
@@ -403,18 +431,23 @@ async def ask_avatar(request: AskRequest):
     reply_ja = translation["japanese"]
     romanization = translation["romanization"]
 
-    # Voice + visemes for both tracks.
+    # Voice + visemes for both tracks. A per-request voice (chosen by the
+    # user for this character) overrides the global default; resolve_voice()
+    # already falls back to the default when None is passed.
+    en_voice_name = resolve_voice(request.voice_en, "en")
+    ja_voice_name = resolve_voice(request.voice_ja, "ja")
+
     en_name = next_audio_name("en")
     ja_name = next_audio_name("ja")
     visemes_en, visemes_ja = [], []
     try:
         visemes_en = await generate_tts_with_visemes(
-            reply_en, EN_VOICE, os.path.join("static", en_name))
+            reply_en, en_voice_name, os.path.join("static", en_name))
     except Exception as e:
         print(f"EN TTS error: {e}")
     try:
         visemes_ja = await generate_tts_with_visemes(
-            reply_ja, JA_VOICE, os.path.join("static", ja_name))
+            reply_ja, ja_voice_name, os.path.join("static", ja_name))
     except Exception as e:
         print(f"JA TTS error: {e}")
 
@@ -430,7 +463,7 @@ async def ask_avatar(request: AskRequest):
         "gesture": behavior["gesture"],
         "emotion": behavior["expression"],
 
-        "voice": resolve_voice(persona["voice"], persona["culture"]),
+        "voice": ja_voice_name if primary == "ja" else en_voice_name,
         "background": persona["background"],
         "primary": primary,
 
@@ -501,4 +534,4 @@ async def reset_conversation():
 
 @app.get("/voices")
 async def list_voices():
-    return {"en": EN_VOICE, "ja": JA_VOICE, "map": VOICE_MAP}
+    return {"catalog": VOICE_CATALOG, "default_en": EN_VOICE, "default_ja": JA_VOICE}
