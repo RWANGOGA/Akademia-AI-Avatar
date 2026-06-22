@@ -102,51 +102,71 @@ def get_room(room_id: str) -> TranslationRoom:
 
 def normalize_audio(raw_bytes: bytes) -> bytes:
     if not PYDUB_AVAILABLE:
+        print("⚠️ pydub not available, sending raw audio")
         return raw_bytes
+    
     try:
         audio_stream = io.BytesIO(raw_bytes)
         audio_segment = AudioSegment.from_file(audio_stream)
+        
+        # Strong normalization for better STT
+        audio_segment = audio_segment.set_channels(1)
+        audio_segment = audio_segment.set_frame_rate(16000)
+        audio_segment = audio_segment.normalize(headroom=0.1)
+        
         wav_io = io.BytesIO()
-        audio_segment.export(wav_io, format="wav", parameters=["-ac", "1", "-ar", "16000"])
-        return wav_io.getvalue()
+        audio_segment.export(wav_io, format="wav")
+        normalized = wav_io.getvalue()
+        
+        print(f"✅ Normalized audio: {len(normalized)} bytes")
+        return normalized
+        
     except Exception as e:
-        print(f"⚠️ Normalization bypassed: {e}")
+        print(f"⚠️ Normalization failed: {e}")
         return raw_bytes
 
+
 def transcribe(audio_bytes: bytes) -> str:
+    if len(audio_bytes) < 2000:   # Ignore very tiny chunks
+        print(f"🤏 Audio too small ({len(audio_bytes)} bytes), skipping")
+        return ""
+
     if not deepgram_client:
-        print("⚠️ Deepgram not configured, falling back to Groq")
+        print("⚠️ Deepgram disabled → Using Groq")
         return groq_transcribe(audio_bytes)
-    
+
     try:
-        # ✅ Correct Deepgram SDK v7 syntax for pre-recorded audio
+        print(f"🎙️ Trying Deepgram on {len(audio_bytes)} bytes...")
         response = deepgram_client.listen.v1.media.transcribe_file(
-            request=audio_bytes,           # raw bytes
+            request=audio_bytes,
             model="nova-2",
             smart_format=True,
             punctuate=True,
-            detect_language=True,          # Let it auto-detect
-            # Do NOT pass 'language' list when detect_language=True
+            detect_language=True,
         )
-        
-        transcript = response.results.channels[0].alternatives[0].transcript
-        return transcript.strip()
-        
+        transcript = response.results.channels[0].alternatives[0].transcript.strip()
+        print(f"✅ Deepgram: {transcript[:80]}...")
+        return transcript
     except Exception as e:
-        print(f"❌ Deepgram transcription failed: {e}")
+        print(f"❌ Deepgram failed: {e}")
         return groq_transcribe(audio_bytes)
 
 
 def groq_transcribe(audio_bytes: bytes) -> str:
-    """Helper to avoid duplication"""
-    audio_file = io.BytesIO(audio_bytes)
-    audio_file.name = "input.wav"
-    transcript = groq_stt_client.audio.transcriptions.create(
-        model="whisper-large-v3",
-        file=audio_file,
-        prompt="Live conversation between people speaking different languages."
-    )
-    return transcript.text.strip()
+    try:
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "input.wav"
+        transcript = groq_stt_client.audio.transcriptions.create(
+            model="whisper-large-v3",
+            file=audio_file,
+            prompt="Live conversation between people speaking different languages."
+        )
+        text = transcript.text.strip()
+        print(f"✅ Groq transcribed: {text[:80]}...")
+        return text
+    except Exception as e:
+        print(f"❌ Groq also failed: {e}")
+        return ""
 
 
 # The rest of your file (translate, generate_tts, websocket endpoint) remains exactly the same
