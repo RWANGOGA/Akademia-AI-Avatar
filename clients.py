@@ -1,81 +1,166 @@
 import os
+import io
 from openai import OpenAI
 from dotenv import load_dotenv
-
-# 🛠️ Official Google GenAI SDK
-from google import genai
-
-# 🎙️ Deepgram SDK
 from deepgram import DeepgramClient
 
 load_dotenv()
 
 # ==========================================
-# 🔑 API KEY INITIALIZATION
+# 🔑 API KEY INITIALIZATION (3 APIs)
 # ==========================================
 
-# 🎙️ Deepgram Client (for live transcription)
+# 🎙️ Deepgram (Primary STT for ALL audio)
 deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
-deepgram_client = DeepgramClient(api_key=deepgram_api_key) if deepgram_api_key else None  # ✅ FIXED
+deepgram_client = DeepgramClient(api_key=deepgram_api_key) if deepgram_api_key else None
 
-# 🎤 Groq Client (for avatar chat transcription - Whisper V3)
+# 🚀 Groq (Primary LLM + STT fallback)
 groq_api_key = os.getenv("GROQ_API_KEY")
-groq_stt_client = OpenAI(
+groq_client = OpenAI(
     api_key=groq_api_key,
     base_url="https://api.groq.com/openai/v1"
 ) if groq_api_key else None
 
-# 🧠 Google Native GenAI Client (for optional future use)
-google_api_key = os.getenv("GOOGLE_API_KEY")
-google_native_client = genai.Client(api_key=google_api_key) if google_api_key else None
+# 🧠 NVIDIA (Fallback LLM)
+nvidia_api_key = os.getenv("NVIDIA_API_KEY")
 
-# 🎵 Library used for automatic audio recovery/normalization
+# 🎵 Audio normalization
 try:
     from pydub import AudioSegment
     PYDUB_AVAILABLE = True
 except ImportError:
     PYDUB_AVAILABLE = False
-    print("⚠️ pydub is not installed. Run 'pip install pydub' to enable automatic WAV audio normalization.")
+    print("⚠️ pydub not installed. Run 'pip install pydub'.")
 
 # ==========================================
 # 🛡️ PRE-FLIGHT CHECKS
 # ==========================================
 if not deepgram_api_key:
-    print("⚠️ DEEPGRAM_API_KEY is missing. Deepgram services will fail.")
-if not os.getenv("NVIDIA_API_KEY"):
-    print("⚠️ NVIDIA_API_KEY is missing. LLM responses may fail.")
+    print("⚠️ DEEPGRAM_API_KEY missing.")
 if not groq_api_key:
-    print("⚠️ GROQ_API_KEY is missing. Groq transcription will fail.")
-if not google_api_key:
-    print("⚠️ GOOGLE_API_KEY is missing. Google Gemini services will fail.")
-
+    print("⚠️ GROQ_API_KEY missing.")
+if not nvidia_api_key:
+    print("⚠️ NVIDIA_API_KEY missing.")
 
 # ==========================================
-# 🧠 LLM CLIENT ROUTER
+# 🚀 PRIMARY LLM CLIENT (Groq - Ultra Fast)
 # ==========================================
-def get_llm_client(model_id: str):
-    """
-    Automatically routes to the correct API based on the model prefix.
-    Shared by backend.py (avatar chat) and live_translation.py (live interpreter).
-    """
-    if model_id.startswith("google/"):
-        client = OpenAI(
-            api_key=google_api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-        )
-        clean_model = model_id.replace("google/", "")
+GROQ_MODEL = "llama-3.3-70b-versatile"  # ✅ Current, fast, multilingual
+NVIDIA_MODEL = "meta/llama-3.1-70b-instruct"  # Fallback
 
-    elif model_id.startswith("nvidia/"):
+
+def get_primary_llm():
+    """Returns (client, model_name) for primary LLM (Groq)"""
+    if groq_client:
+        return groq_client, GROQ_MODEL
+    # Fallback to NVIDIA if Groq unavailable
+    if nvidia_api_key:
         client = OpenAI(
-            api_key=os.getenv("NVIDIA_API_KEY"),
+            api_key=nvidia_api_key,
             base_url="https://integrate.api.nvidia.com/v1"
         )
-        clean_model = model_id.replace("nvidia/", "")
+        return client, NVIDIA_MODEL
+    raise RuntimeError("No LLM client available. Check GROQ_API_KEY or NVIDIA_API_KEY.")
 
-    else:
+
+def get_fallback_llm():
+    """Returns (client, model_name) for fallback LLM (NVIDIA)"""
+    if nvidia_api_key:
         client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", "sk-dummy-key-for-fallback")
+            api_key=nvidia_api_key,
+            base_url="https://integrate.api.nvidia.com/v1"
         )
-        clean_model = model_id.replace("openai/", "")
+        return client, NVIDIA_MODEL
+    return None, None
 
-    return client, clean_model
+
+# ==========================================
+# 🎙️ SMART TRANSCRIPTION (Deepgram → Groq Whisper)
+# ==========================================
+def smart_transcribe(audio_bytes: bytes, prompt: str = "") -> str:
+    """
+    Primary: Deepgram nova-2
+    Fallback: Groq Whisper (when Deepgram credits exhausted)
+    """
+    # 🔹 Attempt 1: Deepgram (Primary)
+    if deepgram_client:
+        try:
+            print("🎙️ Trying Deepgram nova-2...")
+            
+            # ✅ Correct Deepgram v7 API - pass raw bytes directly
+            response = deepgram_client.listen.v1.media.transcribe_file(
+                request=audio_bytes,
+                model="nova-2",
+                smart_format=True,
+                punctuate=True,
+                detect_language=True,
+            )
+            transcript = response.results.channels[0].alternatives[0].transcript.strip()
+            print(f"✅ Deepgram: '{transcript}'")
+            return transcript
+        except Exception as e:
+            print(f"⚠️ Deepgram failed: {e}. Falling back to Groq Whisper...")
+    
+    # 🔹 Attempt 2: Groq Whisper (Fallback)
+    if groq_client:
+        try:
+            print("🎤 Trying Groq Whisper...")
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "input.wav"
+            transcript = groq_client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=audio_file,
+                prompt=prompt or "Live conversation context."
+            )
+            result = transcript.text.strip()
+            print(f"✅ Groq Whisper: '{result}'")
+            return result
+        except Exception as e:
+            print(f"❌ Groq Whisper also failed: {e}")
+    
+    return ""
+
+
+# ==========================================
+# 🧠 SMART LLM CALL (Groq → NVIDIA fallback)
+# ==========================================
+def smart_llm_call(messages: list, temperature: float = 0.7) -> str:
+    """
+    Primary: Groq Llama 3.3 70B (ultra-fast)
+    Fallback: NVIDIA Llama 3.1 70B
+    """
+    # 🔹 Attempt 1: Groq (Primary - blazing fast!)
+    if groq_client:
+        try:
+            print(f"🚀 Trying Groq {GROQ_MODEL}...")
+            response = groq_client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content.strip()
+            print(f"✅ Groq responded ({len(result)} chars)")
+            return result
+        except Exception as e:
+            print(f"⚠️ Groq failed: {e}. Falling back to NVIDIA...")
+    
+    # 🔹 Attempt 2: NVIDIA (Fallback)
+    if nvidia_api_key:
+        try:
+            print(f"🧠 Trying NVIDIA {NVIDIA_MODEL}...")
+            client = OpenAI(
+                api_key=nvidia_api_key,
+                base_url="https://integrate.api.nvidia.com/v1"
+            )
+            response = client.chat.completions.create(
+                model=NVIDIA_MODEL,
+                messages=messages,
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content.strip()
+            print(f"✅ NVIDIA responded ({len(result)} chars)")
+            return result
+        except Exception as e:
+            print(f"❌ NVIDIA also failed: {e}")
+    
+    return ""

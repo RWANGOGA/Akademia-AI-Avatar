@@ -7,32 +7,29 @@
     <link rel="stylesheet" href="./style.css">
   </head>
   <body>
-    <!-- MODE SWITCHER (Top Center) -->
+    <!-- MODE SWITCHER -->
     <div class="mode-switcher">
         <button id="avatarModeBtn" class="mode-btn active">🤖 Avatar Chat</button>
         <button id="liveModeBtn" class="mode-btn">📹 Live Communication</button>
     </div>
 
     <div id="loading">Loading 3D Avatar...</div>
-    
+
     <!-- ========================================== -->
-    <!-- MODE 1: AVATAR CHAT (Current System) -->
+    <!-- MODE 1: AVATAR CHAT                        -->
     <!-- ========================================== -->
     <div id="avatarMode" class="mode-container active">
-        <!-- LEFT SIDE: Avatar Area -->
         <div id="canvas-container"></div>
 
-        <!-- 2D Face with Aura and Badge -->
         <div id="face-container">
             <div id="face-aura"></div>
             <img id="uploaded-face" src="" alt="User Face">
             <div id="mode-badge">💼</div>
         </div>
 
-        <!-- RIGHT SIDE: Chat Panel -->
         <div id="chat-wrapper">
             <div id="chat-container"></div>
-            
+
             <div class="controls-bar">
                 <div class="input-row">
                     <select id="personaSelect" title="Persona" aria-label="Persona">
@@ -41,16 +38,10 @@
                         <option value="Casual">😎 Casual</option>
                     </select>
 
-                    <select id="modelSelect" title="AI Model" aria-label="AI Model">
-                        <option>Loading models...</option>
-                    </select>
-
                     <input type="text" id="userInput" placeholder="Type here...">
-                    
-                    <!-- Hidden File Input for Images Only -->
-                    <input type="file" id="imageFile" accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,image/*" class="hidden-file-input">
-                    
-                    <!-- Action Buttons -->
+
+                    <input type="file" id="imageFile" accept="image/*" class="hidden-file-input">
+
                     <button type="button" id="recordBtn" title="Record Voice" class="record-btn">🎙️</button>
                     <button type="button" id="imageUploadBtn" title="Upload Image">🖼️</button>
                     <button type="button" id="speakBtn">Send</button>
@@ -58,95 +49,129 @@
             </div>
         </div>
     </div>
+
     <!-- ========================================== -->
-<!-- LIVE TRANSLATION JOIN SCREEN (Zoom-style)  -->
-<!-- Shown before entering the live room.       -->
+<!-- LIVE TRANSLATION JOIN SCREEN (Modal)      -->
 <!-- ========================================== -->
 <div id="joinScreenOverlay" class="join-screen-overlay hidden">
     <div class="join-screen-card">
-        <h2>Join live translation</h2>
-        <p class="join-screen-subtitle">Enter your details and choose the language you want to hear.</p>
-
-        <label for="joinNameInput">Your name</label>
-        <input type="text" id="joinNameInput" placeholder="e.g. Jonan" maxlength="60">
-
-        <label for="joinTitleInput">Your title (optional)</label>
-        <input type="text" id="joinTitleInput" placeholder="e.g. HR Interviewer, Candidate, Guest" maxlength="60">
-
-        <label for="joinLanguageSelect">Language you want to hear</label>
-        <select id="joinLanguageSelect">
-            <option value="English">English</option>
-            <option value="Japanese">Japanese</option>
-            <option value="French">French</option>
-            <option value="Spanish">Spanish</option>
-            <option value="German">German</option>
-            <option value="Chinese">Chinese</option>
-            <option value="Korean">Korean</option>
-            <option value="Arabic">Arabic</option>
-            <option value="Swahili">Swahili</option>
-            <option value="Luganda">Luganda</option>
-        </select>
-
-        <button type="button" id="joinRoomBtn" class="control-btn primary join-btn">Join Room</button>
+        <h2>🌐 Join Live Translation</h2>
+        <p class="join-screen-subtitle">Enter your details to join the translation room</p>
+        
+        <div class="form-group">
+            <label for="joinNameInput">Your Name *</label>
+            <input type="text" id="joinNameInput" placeholder="e.g., Jonan Akandwanaho" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="joinTitleInput">Your Role/Title (Optional)</label>
+            <input type="text" id="joinTitleInput" placeholder="e.g., HR Manager, Developer">
+        </div>
+        
+        <div class="form-group">
+            <label for="joinLanguageSelect">Language You Want to Hear</label>
+            <select id="joinLanguageSelect">
+                <option value="English">🇬🇧 English</option>
+                <option value="Japanese">🇯🇵 Japanese</option>
+                <option value="French">🇫🇷 French</option>
+                <option value="Spanish">🇪🇸 Spanish</option>
+                <option value="German">🇩 German</option>
+                <option value="Chinese">🇨 Chinese</option>
+                <option value="Korean">🇰🇷 Korean</option>
+                <option value="Arabic">🇸🇦 Arabic</option>
+                <option value="Swahili">🇰 Swahili</option>
+                <option value="Luganda">🇺 Luganda</option>
+            </select>
+        </div>
+        
+        <button type="button" id="joinRoomBtn" class="join-btn">
+            ✅ Join Room
+        </button>
     </div>
 </div>
+       
+    <!-- ========================================== -->
+    <!-- MODE 2: LIVE COMMUNICATION                 -->
+    <!-- ========================================== -->
+    <div id="liveMode" class="mode-container">
 
-<!-- ========================================== -->
-<!-- MODE 2: LIVE COMMUNICATION (Zoom-Style)     -->
-<!-- Panels are now generic "me" / "them" since   -->
-<!-- roles are no longer fixed interviewer/candidate -->
-<!-- ========================================== -->
-<div id="liveMode" class="mode-container">
-    <div class="participant-panel">
-        <div class="participant-label" id="myPanelLabel">You</div>
-        <div class="video-container" id="myVideoContainer">
-            <div class="live-badge">LIVE</div>
-            <div class="video-placeholder" id="myPlaceholder">
-                <div class="video-placeholder-icon">🎥</div>
-                <div class="video-placeholder-text">Camera Off</div>
+        <!-- MY PANEL -->
+        <div class="participant-panel">
+            <div class="participant-label" id="myPanelLabel">You</div>
+            <div class="video-container" id="myVideoContainer">
+                <div class="live-badge">LIVE</div>
+                <div class="video-placeholder" id="myPlaceholder">
+                    <div class="video-placeholder-icon">🎥</div>
+                    <div class="video-placeholder-text">Camera Off</div>
+                </div>
+                <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
+
+                <!-- Speaking indicator waveform -->
+                <div class="speaking-indicator" id="mySpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+
+                <!-- Pipeline state badge: Listening... / Transcribing... / Translating... -->
+                <div class="pipeline-state" id="myPipelineState"></div>
+
+                <div class="participant-avatar-overlay" id="myAvatar">🙂</div>
             </div>
-            <video id="localVideo" autoplay playsinline webkit-playsinline muted style="display:none;"></video>
-            <div class="participant-avatar-overlay" id="myAvatar">🙂</div>
-        </div>
-        <div class="translation-display" id="myTranslation">
-            <div class="original-text">Waiting for speech...</div>
-            <div class="translated-text"></div>
-        </div>
-    </div>
-
-    <div class="participant-panel">
-        <div class="participant-label" id="theirPanelLabel">Other participant</div>
-        <div class="video-container" id="theirVideoContainer">
-            <div class="video-placeholder" id="theirPlaceholder">
-                <div class="video-placeholder-icon">👤</div>
-                <div class="video-placeholder-text">Waiting for participant...</div>
+            <div class="translation-display" id="myTranslation">
+                <!-- ID used by livetranslation.js to update my caption -->
+                <div class="original-text" id="myOriginalText">Waiting for speech...</div>
             </div>
-            <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
-            <div class="participant-avatar-overlay" id="theirAvatar">👤</div>
         </div>
-        <div class="translation-display" id="theirTranslation">
-            <div class="participant-name" style="font-weight:500; margin-bottom:4px;"></div>
-            <div class="original-text">Waiting for speech...</div>
-            <div class="translated-text"></div>
+
+        <!-- THEIR PANEL -->
+        <div class="participant-panel">
+            <div class="participant-label" id="theirPanelLabel">Other participant</div>
+            <div class="video-container" id="theirVideoContainer">
+                <div class="video-placeholder" id="theirPlaceholder">
+                    <div class="video-placeholder-icon">👤</div>
+                    <div class="video-placeholder-text">Waiting for participant...</div>
+                </div>
+                <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none;"></video>
+
+                <!-- Their speaking indicator -->
+                <div class="speaking-indicator" id="theirSpeakingIndicator">
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                    <div class="wave-bar"></div>
+                </div>
+
+                <div class="participant-avatar-overlay" id="theirAvatar">👤</div>
+            </div>
+            <div class="translation-display" id="theirTranslation">
+                <!-- IDs used by livetranslation.js to update their captions -->
+                <div class="participant-name" id="theirName"></div>
+                <div class="original-text" id="theirOriginalText">Waiting for speech...</div>
+                <div class="translated-text" id="theirTranslatedText"></div>
+            </div>
+        </div>
+
+        <!-- CONTROL BAR -->
+        <div class="live-controls">
+            <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
+            <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
+            <button type="button" id="startTranslationBtn" class="control-btn primary" disabled>🌐 Not connected</button>
+            <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Speaking</button>
+            <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
         </div>
     </div>
 
-    <div class="live-controls">
-        <button type="button" id="toggleMicBtn" class="control-btn">🎤 Mute</button>
-        <button type="button" id="toggleCamBtn" class="control-btn">📹 Turn Off Camera</button>
-        <button type="button" id="startTranslationBtn" class="control-btn primary" disabled>🌐 Not connected</button>
-        <button type="button" id="micBtn" class="control-btn primary">🎙️ Start Interview</button>
-        <button type="button" id="endCallBtn" class="control-btn danger">📞 End Call</button>
-    </div>
-</div>
-   
-    <!-- OLD 3D/2D TOGGLE (Only visible in Avatar Mode) -->
+    <!-- 3D/2D TOGGLE (Avatar Mode only) -->
     <div class="mode-toggle hidden">
         <span>Avatar Mode:</span>
         <button type="button" id="mode3dBtn" class="mode-toggle-btn active">3D</button>
         <button type="button" id="mode2dBtn" class="mode-toggle-btn">2D</button>
     </div>
 
-    <script type="module" src="/main.js"></script> 
+    <script type="module" src="/main.js"></script>
   </body>
 </html>

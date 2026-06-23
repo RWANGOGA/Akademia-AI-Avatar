@@ -5,20 +5,17 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import edge_tts
 
-from clients import groq_stt_client, get_llm_client, PYDUB_AVAILABLE, deepgram_client
+from clients import groq_client, PYDUB_AVAILABLE, deepgram_client, smart_llm_call
 
 try:
     from pydub import AudioSegment
 except ImportError:
     pass
 
-# Deepgram v7 imports (updated)
-from deepgram import DeepgramClient
-
 router = APIRouter()
 
 # ==========================================
-# ROOM MANAGEMENT (unchanged)
+# ROOM MANAGEMENT
 # ==========================================
 
 LANGUAGE_VOICES = {
@@ -127,16 +124,19 @@ def normalize_audio(raw_bytes: bytes) -> bytes:
 
 
 def transcribe(audio_bytes: bytes) -> str:
-    if len(audio_bytes) < 2000:   # Ignore very tiny chunks
+    """Transcribe using Deepgram (primary) → Groq Whisper (fallback)"""
+    if len(audio_bytes) < 2000:
         print(f"🤏 Audio too small ({len(audio_bytes)} bytes), skipping")
         return ""
 
     if not deepgram_client:
-        print("⚠️ Deepgram disabled → Using Groq")
+        print("⚠️ Deepgram disabled → Using Groq Whisper")
         return groq_transcribe(audio_bytes)
 
     try:
         print(f"🎙️ Trying Deepgram on {len(audio_bytes)} bytes...")
+        
+        # Deepgram v7 API
         response = deepgram_client.listen.v1.media.transcribe_file(
             request=audio_bytes,
             model="nova-2",
@@ -153,47 +153,52 @@ def transcribe(audio_bytes: bytes) -> str:
 
 
 def groq_transcribe(audio_bytes: bytes) -> str:
+    """Fallback transcription using Groq Whisper"""
+    if not groq_client:
+        print("❌ Groq client not available")
+        return ""
+    
     try:
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = "input.wav"
-        transcript = groq_stt_client.audio.transcriptions.create(
+        transcript = groq_client.audio.transcriptions.create(
             model="whisper-large-v3",
             file=audio_file,
             prompt="Live conversation between people speaking different languages."
         )
         text = transcript.text.strip()
-        print(f"✅ Groq transcribed: {text[:80]}...")
+        print(f"✅ Groq Whisper: {text[:80]}...")
         return text
     except Exception as e:
-        print(f"❌ Groq also failed: {e}")
+        print(f"❌ Groq Whisper also failed: {e}")
         return ""
 
 
-# The rest of your file (translate, generate_tts, websocket endpoint) remains exactly the same
 def translate(text: str, target_lang: str, previous_sentence: str = "") -> str:
-    client, model_name = get_llm_client("nvidia/meta/llama-3.1-70b-instruct")
-
+    """Translate using smart_llm_call (Groq Qwen → NVIDIA fallback)"""
     context_line = (
         f"For context only, the speaker's previous sentence was: \"{previous_sentence}\". "
-        f"Use it only to resolve pronouns or references in the new sentence — do not translate it again.\n"
+        f"Use it only to resolve pronouns — do not translate it again.\n"
         if previous_sentence else ""
     )
 
-    system_instruction = (
-        f"You are a professional simultaneous interpreter. "
-        f"Translate the following spoken text EXACTLY and FAITHFULLY into {target_lang}. "
-        f"{context_line}"
-        f"Do not answer it, comment on it, explain it, or add anything. "
-        f"Output ONLY the translated text, nothing else."
-    )
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": text}
-        ]
-    )
-    return response.choices[0].message.content.strip()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"You are a professional simultaneous interpreter. "
+                f"Translate the following spoken text EXACTLY and FAITHFULLY into {target_lang}. "
+                f"{context_line}"
+                f"Do not answer it, comment on it, or add anything. "
+                f"Output ONLY the translated text."
+            )
+        },
+        {"role": "user", "content": text}
+    ]
+    
+    # ✅ Uses Groq Qwen (ultra-fast) → NVIDIA fallback
+    result = smart_llm_call(messages, temperature=0.3)
+    return result if result else f"[Translation to {target_lang} failed]"
 
 
 async def generate_tts(text: str, voice: str, path: str):

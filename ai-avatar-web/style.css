@@ -394,9 +394,6 @@ button {
 
 .hidden-file-input { display: none; }
 
-
-
-
 /* Button disabled states */
 button:disabled {
     opacity: 0.6;
@@ -444,62 +441,116 @@ button:disabled {
     0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 75, 43, 0.7); }
     50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 75, 43, 0); }
 }
+
 /* ========================================== */
-/* JOIN SCREEN OVERLAY (Zoom-style entry form) */
+/* JOIN SCREEN OVERLAY (Centered Modal)       */
 /* ========================================== */
 .join-screen-overlay {
   position: fixed;
-  inset: 0;
-  z-index: 2000;
-  background: rgba(0, 0, 0, 0.55);
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 10000; /* High z-index to cover everything */
+  padding: 20px;
 }
 
-.join-screen-overlay.hidden { display: none; }
+.join-screen-overlay.hidden {
+  display: none !important;
+}
 
 .join-screen-card {
   background: white;
-  border-radius: 16px;
-  padding: 32px;
-  width: 360px;
-  max-width: 90vw;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  border-radius: 20px;
+  padding: 40px;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .join-screen-card h2 {
-  margin: 0 0 4px 0;
-  font-size: 20px;
+  margin: 0 0 10px 0;
+  font-size: 28px;
+  color: #1a1a1a;
+  text-align: center;
+  font-weight: 700;
 }
 
 .join-screen-subtitle {
-  margin: 0 0 16px 0;
-  font-size: 13px;
+  margin: 0 0 30px 0;
+  font-size: 15px;
   color: #666;
+  text-align: center;
+  line-height: 1.6;
 }
 
-.join-screen-card label {
-  font-size: 13px;
-  font-weight: bold;
-  margin-top: 10px;
+.form-group {
+  margin-bottom: 24px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
   color: #333;
 }
 
-.join-screen-card input[type="text"],
-.join-screen-card select {
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.15);
-  font-size: 14px;
+/* Specific selectors to override generic input styles above */
+.form-group input[type="text"],
+.form-group select {
+  width: 100%;
+  padding: 14px 18px;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  font-size: 15px;
   outline: none;
+  transition: all 0.3s;
+  box-sizing: border-box;
+  background: #fafafa;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: #007bff;
+  background: white;
+  box-shadow: 0 0 0 4px rgba(0, 123, 255, 0.1);
 }
 
 .join-btn {
-  margin-top: 20px;
-  padding: 12px;
-  font-size: 15px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+}
+
+.join-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
 }
