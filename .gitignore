@@ -12,9 +12,7 @@ ai-avatar-web/dist/
 static/*.mp3
 static/face_upload.*
 
-# Local avatar models (large; provide your own .vrm files)
-ai-avatar-web/public/assets/avatars/*.vrm
-ai-avatar-web/public/assets/avatars/*.glb
+
 
 # OS
 .DS_Store
