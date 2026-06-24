@@ -1,5 +1,6 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { AvatarScale } from './AvatarScale.js';
 
 /**
  * AvatarManager — loads and positions the avatar body.
@@ -51,14 +52,15 @@ export class AvatarManager {
                         console.log('VRM avatar loaded:', url);
                         resolve(vrm);
                     } else {
-                        // Standard GLB avatar (Ready Player Me style)
+                        // Standard GLB avatar (Ready Player Me, Mixamo, etc.)
+                        // Rotate to face camera — GLB/glTF uses +Z forward,
+                        // but three.js scenes expect -Z, so flip 180°.
                         gltf.scene.rotation.y = Math.PI;
-                        gltf.scene.position.set(0, -1, 0);
+
                         gltf.scene.traverse((obj) => {
                             obj.frustumCulled = false;
                             obj.castShadow = true;
                         });
-                        this.scene.add(gltf.scene);
 
                         // Wrap GLB so the rest of the app treats it like a VRM.
                         const wrapper = {
@@ -69,6 +71,13 @@ export class AvatarManager {
                             update: () => {},
                             dispose: () => VRMUtils.deepDispose(gltf.scene),
                         };
+
+                        // Normalize size + ground feet at y=0, just like VRM.
+                        // Must happen BEFORE scene.add so the bounding box
+                        // is computed in local space without camera offsets.
+                        AvatarScale.apply(wrapper);
+
+                        this.scene.add(gltf.scene);
                         this.currentAvatar = wrapper;
                         console.log('GLB avatar loaded:', url);
                         resolve(wrapper);
@@ -115,9 +124,10 @@ export class AvatarManager {
     applyCustomization(vrm, { hairColor, clothColor, skinColor, heightScale, buildScale } = {}) {
         if (!vrm || !vrm.scene) return;
 
-        const h = heightScale || 1;
-        const b = buildScale || 1;
-        vrm.scene.scale.set(b, h, b);
+        // Never reset scale to 1×1×1 — that undoes AvatarScale normalization.
+        if (heightScale !== undefined || buildScale !== undefined) {
+            AvatarScale.applyProportions(vrm, heightScale ?? 1, buildScale ?? 1);
+        }
 
         if (!hairColor && !clothColor && !skinColor) return;
 

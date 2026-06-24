@@ -33,6 +33,17 @@ const SCENES = {
         <rect x="470" y="210" width="220" height="60" rx="18" fill="#15301f"/>
         <rect x="470" y="195" width="220" height="22" rx="11" fill="#1c3a26"/>
     `),
+    market: svgScene('#1a2810', '#0a0e06', `
+        <rect x="0" y="200" width="700" height="120" fill="#0f1808" opacity="0.85"/>
+        <rect x="30" y="160" width="90" height="70" rx="4" fill="#2a3818" stroke="#4a5a28" stroke-width="2"/>
+        <rect x="140" y="150" width="100" height="80" rx="4" fill="#324018" stroke="#5a6830" stroke-width="2"/>
+        <rect x="270" y="165" width="80" height="65" rx="4" fill="#283510"/>
+        <rect x="380" y="145" width="110" height="85" rx="4" fill="#3a4818"/>
+        <rect x="520" y="155" width="95" height="75" rx="4" fill="#2e4012"/>
+        <circle cx="80" cy="130" r="8" fill="#e8a030" opacity="0.7"/>
+        <circle cx="200" cy="120" r="8" fill="#e85030" opacity="0.65"/>
+        <circle cx="430" cy="125" r="8" fill="#e8c030" opacity="0.7"/>
+    `),
     tokyo: svgScene('#1a1030', '#0a0714', `
         <rect x="0" y="0" width="200" height="320" fill="#0d0820" opacity="0.8"/>
         <rect x="220" y="40" width="160" height="280" fill="#100a26" opacity="0.8"/>
@@ -88,6 +99,11 @@ export const WORLDS = {
         name: 'Urban Lounge',
         image: '/assets/backgrounds/lounge.jpg',
         gradient: SCENES.lounge,
+    },
+    market: {
+        name: 'Kampala Market',
+        image: '/assets/backgrounds/market.jpg',
+        gradient: SCENES.market,
     },
     tokyo: {
         name: 'Tokyo Street',

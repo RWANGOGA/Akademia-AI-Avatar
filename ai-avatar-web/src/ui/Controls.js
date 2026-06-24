@@ -1,18 +1,20 @@
 /**
  * Controls — all DOM/UI wiring.
- *
- * Handles: chat input, mic, scrolling chat thread, avatar/scenario modal,
- * in-page preset avatar creator (no iframes), suggestions, profile card.
  */
+import { PERSONAS } from '../systems/PersonaSystem.js';
+import { LEARNING_MODES } from '../culture/CultureEngine.js';
+
 const SUGGESTIONS = [
-  'How do I say thank you in Japanese?',
-  'Teach me a simple greeting.',
-  'Translate: nice to meet you.',
-  'Tell me about Tokyo.',
-  'How are you today?',
-  'What is the weather like in Japan?',
-  'Explain Japanese counting numbers.',
-  'How do I introduce myself in Japanese?',
+  'How should I greet my Ugandan business partner?',
+  'Teach me: Oli otya? — how do I say it?',
+  'Compare punctuality: Japan vs Uganda.',
+  'What happens at a first meeting in Kampala?',
+  'Explain Ugandan negotiation style for Japanese investors.',
+  'What should I know before my trip to Uganda?',
+  'How do I exchange business cards with Japanese partners?',
+  'What is mobile money and why does it matter in Uganda?',
+  'What mistakes do Japanese investors often make in Uganda?',
+  'Teach me a Luganda phrase for a business meeting.',
 ];
 
 export class Controls {
@@ -36,7 +38,8 @@ export class Controls {
     this._bindChatThread();
     this._bindVoiceSettings();
     this._initTabs();
-    this._initScenarioCards();
+    this._initCultureModes();
+    this._bindCultureMenu();
     this.refreshSuggestions();
     // On phone-sized screens, start in the compact "peek" view (just the
     // latest message) to keep the avatar visible — matches the reference
@@ -61,6 +64,9 @@ export class Controls {
     document.getElementById('mic-btn')?.addEventListener('click', (e) => {
       e.stopPropagation(); this.toggleVoice();
     });
+    document.getElementById('upload-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
   }
 
   _submit() {
@@ -83,6 +89,18 @@ export class Controls {
       this.h.onReset?.();
       this.clearThread();
       this.showSpeechBubble('SYSTEM', 'Conversation memory cleared.', '');
+    });
+    document.getElementById('menu-culture-guide')?.addEventListener('click', () => {
+      dropdown?.classList.remove('open');
+      this.h.onOpenCulture?.('guide');
+    });
+    document.getElementById('menu-compare-cultures')?.addEventListener('click', () => {
+      dropdown?.classList.remove('open');
+      this.h.onOpenCulture?.('compare');
+    });
+    document.getElementById('menu-luganda-phrases')?.addEventListener('click', () => {
+      dropdown?.classList.remove('open');
+      this.h.onOpenCulture?.('luganda');
     });
   }
 
@@ -249,9 +267,10 @@ export class Controls {
     const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Engine) { console.warn('Speech recognition not supported.'); return; }
     this.recognizer = new Engine();
-    this.recognizer.continuous      = false;
-    this.recognizer.interimResults  = false;
-    this.recognizer.maxAlternatives = 3;
+    this.recognizer.continuous      = true;
+    this.recognizer.interimResults  = true;
+    this.recognizer.maxAlternatives = 1;
+    this._wantMic = false;
 
     this.recognizer.onstart = () => {
       this.recording = true;
@@ -260,13 +279,26 @@ export class Controls {
       this.setStatus('Listening…');
     };
     this.recognizer.onresult = (e) => {
-      const text = e.results[0][0].transcript;
-      if (text) {
-        this.addUserMessage(text);
-        this.h.onAsk?.(text);
+      let interim = '';
+      let finalText = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += t;
+        else interim += t;
+      }
+      const input = document.getElementById('user-input');
+      if (finalText.trim()) {
+        if (input) { input.value = ''; input.style.height = '34px'; }
+        this.addUserMessage(finalText.trim());
+        this.h.onAsk?.(finalText.trim());
+      } else if (input && interim) {
+        input.value = interim;
+        input.style.height = '34px';
+        input.style.height = Math.min(input.scrollHeight, 100) + 'px';
       }
     };
     this.recognizer.onerror = (e) => {
+      this._wantMic = false;
       if (e.error === 'not-allowed') {
         this.showSpeechBubble('SYSTEM', 'Microphone blocked. Click the site info icon (left of the address bar) and allow Microphone — if you\'re on Brave, also turn Shields off for this site (the lion icon), since Shields can silently block mic access.', '');
       } else if (e.error === 'no-speech') {
@@ -278,7 +310,20 @@ export class Controls {
       }
       this._stopVoiceUI();
     };
-    this.recognizer.onend = () => this._stopVoiceUI();
+    this.recognizer.onend = () => {
+      if (this._wantMic) {
+        try { this.recognizer.start(); } catch (_) { this._stopVoiceUI(); }
+      } else {
+        this._stopVoiceUI();
+      }
+    };
+  }
+
+  /** Map learning mode to speech recognition locale. */
+  _micLang() {
+    const mode = this.h.getCultureMode?.() || 'uganda';
+    if (mode === 'japan') return 'ja-JP';
+    return this.lang || 'en-US';
   }
 
   setVoiceLang(culture) { this.lang = culture === 'ja' ? 'ja-JP' : 'en-US'; }
@@ -288,7 +333,13 @@ export class Controls {
       this.showSpeechBubble('SYSTEM', 'Voice input needs Chrome, Edge, or Brave (Shields off) on localhost or HTTPS.', '');
       return;
     }
-    if (this.recording) { this.recognizer.stop(); return; }
+    if (this.recording) {
+      this._wantMic = false;
+      this.recognizer.stop();
+      return;
+    }
+
+    this._wantMic = true;
 
     // Prime/verify the actual OS+browser mic permission first. This makes
     // the failure mode explicit (and catchable) instead of the recognizer
@@ -302,7 +353,7 @@ export class Controls {
       return;
     }
 
-    this.recognizer.lang = this.lang;
+    this.recognizer.lang = this._micLang();
     try {
       this.recognizer.start();
     } catch (err) {
@@ -313,6 +364,7 @@ export class Controls {
 
   _stopVoiceUI() {
     this.recording = false;
+    this._wantMic = false;
     const btn = document.getElementById('mic-btn');
     if (btn) { btn.classList.remove('recording'); btn.textContent = '🎤'; }
     this.setStatus('Ready');
@@ -453,8 +505,44 @@ export class Controls {
     set('avatar-bio',    bio);
   }
 
+  updateProgressBadge(text) {
+    const el = document.getElementById('culture-progress-badge');
+    if (!el) return;
+    if (text) {
+      el.textContent = text;
+      el.style.display = 'inline-block';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  _initCultureModes() {
+    const row = document.getElementById('learning-mode-row');
+    if (!row) return;
+    row.innerHTML = '';
+    Object.values(LEARNING_MODES).forEach((m) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mode-chip';
+      btn.dataset.mode = m.id;
+      btn.textContent = `${m.flag} ${m.label}`;
+      btn.addEventListener('click', () => this.h.onCultureMode?.(m.id));
+      row.appendChild(btn);
+    });
+    this.syncCultureModeChips(this.h.getCultureMode?.() || 'uganda');
+  }
+
+  syncCultureModeChips(active) {
+    document.querySelectorAll('.mode-chip').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === active);
+    });
+  }
+
+  _bindCultureMenu() { /* menu items wired in _bindDropdown */ }
+
   // ── Selection modal ────────────────────────────────────────────────────
   openSelectionWindow(tab) {
+    this.buildScenarioCards();
     this.buildAvatarStack();
     document.getElementById('avatar-modal')?.classList.add('open');
     this._switchTab(tab);
@@ -533,31 +621,49 @@ export class Controls {
     document.getElementById('tab-content-scenarios')?.classList.toggle('active',  scen);
     document.getElementById('tab-content-characters')?.classList.toggle('active', !scen);
     const title = document.getElementById('modal-title');
-    if (title) title.textContent = scen ? 'Discover New Scenarios' : 'Discover New Characters';
+    if (title) title.textContent = scen ? 'Cultural Scenarios' : 'Cultural Guides';
     const subtitle = document.getElementById('modal-subtitle');
     if (subtitle) {
       subtitle.textContent = scen
-        ? "Pick a scenario to change the mood, background and how your character responds — your character stays whoever you've chosen in the Character tab."
-        : 'Pick a character to change who you\'re talking to and what they look like — your scenario (mood/background) stays the same until you change it in the Scenario tab.';
+        ? 'Practice real Uganda–Japan business situations. Your chosen character stays the same until you switch in the Character tab.'
+        : 'Choose a cultural ambassador — Ugandan guides teach Uganda; Japanese guides bridge both worlds.';
     }
-    // "Create Avatar" belongs to Characters only — hide it on the Scenario tab.
     const studioBtn = document.getElementById('launch-studio-btn');
     if (studioBtn) studioBtn.style.display = scen ? 'none' : '';
-    if (!scen) this.buildAvatarStack();   // refresh whenever Characters tab opens
+    if (!scen) this.buildAvatarStack();
   }
 
-  _initScenarioCards() {
-    document.querySelectorAll('#scenario-picker-grid .pick-card').forEach((card) => {
+  buildScenarioCards() {
+    const grid = document.getElementById('scenario-picker-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    const current = this.h.getCurrentScenario?.() || 'FirstMeeting';
+
+    Object.values(PERSONAS).forEach((p) => {
+      const card = document.createElement('div');
+      card.className = `pick-card${p.key === current ? ' active' : ''}`;
+      card.setAttribute('data-scenario', p.key);
+      const thumb = p.thumb || '/assets/thumbs/scenario-classroom.svg';
+      card.innerHTML = `
+        ${this._thumbHtml(thumb, '#2a2a2d')}
+        <div class="pick-card-body">
+          <div class="pick-card-title">${p.name}</div>
+          <div class="pick-card-desc">${p.bio}</div>
+          <button class="enter-scene-btn">Enter Scene</button>
+        </div>`;
       const choose = () => {
-        document.querySelectorAll('#scenario-picker-grid .pick-card').forEach((c) => c.classList.remove('active'));
+        grid.querySelectorAll('.pick-card').forEach((c) => c.classList.remove('active'));
         card.classList.add('active');
-        this.h.onSelectScenario?.(card.getAttribute('data-scenario'));
+        const sel = document.getElementById('persona-select');
+        if (sel) sel.value = p.key;
+        this.h.onSelectScenario?.(p.key);
         document.getElementById('avatar-modal')?.classList.remove('open');
       };
       card.addEventListener('click', choose);
       card.querySelector('.enter-scene-btn')?.addEventListener('click', (e) => {
         e.stopPropagation(); choose();
       });
+      grid.appendChild(card);
     });
   }
 }

@@ -12,6 +12,13 @@ export default defineConfig({
       "/upload-face": "http://localhost:8000",
       "/static":      "http://localhost:8000",
       "/voices":      "http://localhost:8000",
+      "/culture":     "http://localhost:8000",
+      "/analyze-file":"http://localhost:8000",
+      "/meeting":     "http://localhost:8000",
+      "/ws": {
+        target: "http://localhost:8000",
+        ws: true,
+      },
     },
   },
   build: {

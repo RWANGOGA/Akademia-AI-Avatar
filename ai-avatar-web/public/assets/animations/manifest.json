@@ -1,0 +1,11 @@
+{
+  "clips": {
+    "idle": "Idle.fbx",
+    "talk": "Talking.fbx",
+    "explain": "Explaining.fbx",
+    "wave": "Wave.fbx",
+    "think": "Thinking.fbx",
+    "nod": "Nodding.fbx"
+  },
+  "notes": "Download free Mixamo FBX clips (Without Skin, 60fps) and place them here with these exact filenames."
+}

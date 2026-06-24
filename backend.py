@@ -27,12 +27,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import edge_tts
+import random
+import string
+import uuid
 
 from openai import OpenAI
 
@@ -86,12 +89,12 @@ JA_VOICE = "ja-JP-NanamiNeural"
 # and swap them in here — this list is just data, not logic.
 VOICE_CATALOG = {
     "en": [
-        {"name": "en-US-JennyNeural", "label": "Jenny — US, female"},
-        {"name": "en-US-AriaNeural",  "label": "Aria — US, female"},
-        {"name": "en-US-GuyNeural",   "label": "Guy — US, male"},
-        {"name": "en-US-DavisNeural", "label": "Davis — US, male"},
-        {"name": "en-GB-SoniaNeural", "label": "Sonia — UK, female"},
-        {"name": "en-GB-RyanNeural",  "label": "Ryan — UK, male"},
+        {"name": "en-US-JennyNeural", "label": "Jenny (US, female)"},
+        {"name": "en-US-AriaNeural",  "label": "Aria (US, female)"},
+        {"name": "en-US-GuyNeural",   "label": "Guy (US, male)"},
+        {"name": "en-US-DavisNeural", "label": "Davis (US, male)"},
+        {"name": "en-GB-SoniaNeural", "label": "Sonia (UK, female)"},
+        {"name": "en-GB-RyanNeural",  "label": "Ryan (UK, male)"},
     ],
     "ja": [
         {"name": "ja-JP-NanamiNeural", "label": "Nanami — Japanese, female"},
@@ -118,42 +121,205 @@ def resolve_voice(name: str, culture: str) -> str:
     return JA_VOICE if culture == "ja" else EN_VOICE
 
 
-# ── Personas (the avatar's character) ──────────────────────────────────────
+# ── Cultural knowledge (Uganda ↔ Japan) ────────────────────────────────────
+CULTURE_DIR = os.path.join(os.path.dirname(__file__), "culture")
+
+_culture_cache: dict = {}
+
+
+def _load_json(name: str) -> dict:
+    path = os.path.join(CULTURE_DIR, name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Culture file missing ({name}): {e}")
+        return {}
+
+
+def get_characters() -> dict:
+    if "characters" not in _culture_cache:
+        _culture_cache["characters"] = _load_json("characters.json")
+    return _culture_cache["characters"]
+
+
+def get_knowledge(country: str) -> dict:
+    key = f"knowledge_{country}"
+    if key not in _culture_cache:
+        fname = f"knowledge_{country}.json"
+        _culture_cache[key] = _load_json(fname)
+    return _culture_cache[key]
+
+
+def relevant_culture_facts(user_text: str, culture_mode: str, scenario_key: str) -> str:
+    """Keyword-match verified facts from the knowledge base."""
+    text = (user_text or "").lower()
+    countries = []
+    if culture_mode == "japan":
+        countries = ["japan"]
+    elif culture_mode == "compare":
+        countries = ["uganda", "japan"]
+    else:
+        countries = ["uganda"]
+
+    scenario_hints = {
+        "FirstMeeting": ["greetings", "business_etiquette"],
+        "Negotiation": ["negotiation", "business_etiquette"],
+        "SocialMeal": ["food_social"],
+        "MarketVisit": ["market"],
+        "PreTrip": ["pretrip", "greetings"],
+        "JapanPrep": ["greetings", "business_etiquette", "for_ugandan_partners"],
+        "Tutor": ["greetings"],
+        "Business": ["business_etiquette"],
+        "Casual": ["food_social"],
+    }
+    priority_topics = scenario_hints.get(scenario_key, [])
+
+    lines = []
+    for country in countries:
+        kb = get_knowledge(country)
+        topics = kb.get("topics", {})
+        scored = []
+        for topic_id, topic in topics.items():
+            score = 0
+            if topic_id in priority_topics:
+                score += 3
+            for kw in topic.get("keywords", []):
+                if kw.lower() in text:
+                    score += 2
+            if score > 0:
+                scored.append((score, topic_id, topic))
+        scored.sort(key=lambda x: -x[0])
+        for _, _, topic in scored[:3]:
+            for fact in topic.get("facts", [])[:4]:
+                if fact not in lines:
+                    lines.append(fact)
+        if not scored and priority_topics:
+            for tid in priority_topics[:2]:
+                topic = topics.get(tid)
+                if topic:
+                    for fact in topic.get("facts", [])[:2]:
+                        if fact not in lines:
+                            lines.append(fact)
+
+    disclaimer = get_knowledge("uganda").get("meta", {}).get("disclaimer", "")
+    if not lines:
+        return f"Use accurate, respectful cultural guidance. {disclaimer}"
+    return "Verified cultural context (use when relevant):\n- " + "\n- ".join(lines[:10]) + f"\n\n{disclaimer}"
+
+
+CHARACTER_DEFAULT = "Amara"
+
+# Legacy scenario keys map to new cultural scenarios
+SCENARIO_ALIASES = {
+    "Tutor": "FirstMeeting",
+    "Business": "Negotiation",
+    "Casual": "SocialMeal",
+}
+
+# ── Scenarios (cultural simulations) ───────────────────────────────────────
 PERSONAS = {
-    "Tutor": {
-        "name": "Kwame",  # fallback if the frontend doesn't send a character_name
-        "culture": "en",
-        "background": "classroom",
-        "voice": "en-US",
-        "system_template": (
-            "You are {name}, a friendly, patient bilingual (English/Japanese) tutor. "
-            "Use clear, simple, encouraging language. Keep replies under 4 sentences."
-        ),
-    },
-    "Business": {
+    "FirstMeeting": {
         "name": "Amara",
         "culture": "en",
         "background": "office",
         "voice": "en-US",
-        "system_template": (
-            "You are {name}, a professional business assistant for bilingual communication. "
-            "Be concise, formal and factual. Keep replies under 4 sentences."
+        "scenario_context": (
+            "Scenario: First business meeting in Kampala. Teach greetings, "
+            "elders-first protocol, warm handshakes, small talk before business, "
+            "and common first-meeting mistakes Japanese investors make."
         ),
     },
-    "Casual": {
+    "Negotiation": {
+        "name": "Kwame",
+        "culture": "en",
+        "background": "office",
+        "voice": "en-US",
+        "scenario_context": (
+            "Scenario: Negotiation with Ugandan partners. Teach relationship-first "
+            "deal-making, why silence may not mean yes, communal decision-making, "
+            "and how to build trust before discussing numbers."
+        ),
+    },
+    "SocialMeal": {
+        "name": "Amara",
+        "culture": "en",
+        "background": "lounge",
+        "voice": "en-US",
+        "scenario_context": (
+            "Scenario: Social meal or hospitality in Uganda. Teach food customs, "
+            "matooke and local dishes, accepting tea or soda, washing hands, and "
+            "why sharing food builds business relationships."
+        ),
+    },
+    "MarketVisit": {
+        "name": "Kwame",
+        "culture": "en",
+        "background": "market",
+        "voice": "en-US",
+        "scenario_context": (
+            "Scenario: Visiting a Kampala market (e.g. Owino). Teach respectful "
+            "bargaining, building rapport with sellers, and cultural norms in "
+            "busy market environments."
+        ),
+    },
+    "PreTrip": {
+        "name": "Kenji",
+        "culture": "en",
+        "background": "classroom",
+        "voice": "en-US",
+        "scenario_context": (
+            "Scenario: Pre-trip briefing for Japanese investors flying to Uganda. "
+            "Cover visa checks, health prep, what to pack, currency, mobile money, "
+            "phrases to learn, and day-one cultural mistakes to avoid."
+        ),
+    },
+    "JapanPrep": {
         "name": "Yuki",
         "culture": "ja",
-        "background": "lounge",
+        "background": "tokyo",
         "voice": "ja-JP",
-        "system_template": (
-            "You are {name}, a warm, casual companion for everyday conversation. "
-            "Speak naturally and warmly. Keep replies under 4 sentences."
+        "scenario_context": (
+            "Scenario: Ugandan business person preparing to meet Japanese investors. "
+            "Teach meishi ceremony, punctuality, structured meetings, indirect "
+            "communication, and why decisions may take time."
         ),
     },
 }
 
+CULTURE_MODE_HINTS = {
+    "uganda": "Focus on helping the user understand UGANDAN culture, customs, and business etiquette for Japanese investors.",
+    "japan": "Focus on helping the user understand JAPANESE culture and what Japanese investors expect.",
+    "compare": "Compare Uganda and Japan side by side when useful — highlight differences in greetings, business style, time, and negotiation.",
+}
+
+
+def resolve_scenario(key: str) -> str:
+    return SCENARIO_ALIASES.get(key, key)
+
+
+def build_character_system(character_name: str, scenario: dict, culture_mode: str, user_text: str, scenario_key: str) -> str:
+    chars = get_characters()
+    char = chars.get(character_name) or chars.get(CHARACTER_DEFAULT) or {}
+    char_prompt = char.get("prompt", f"You are {character_name}, a cultural guide for Uganda and Japan.")
+
+    mode_hint = CULTURE_MODE_HINTS.get(culture_mode, CULTURE_MODE_HINTS["uganda"])
+    facts = relevant_culture_facts(user_text, culture_mode, scenario_key)
+    scenario_ctx = scenario.get("scenario_context", "")
+
+    return (
+        f"{char_prompt}\n\n"
+        f"Learning focus: {mode_hint}\n\n"
+        f"{scenario_ctx}\n\n"
+        f"{facts}\n\n"
+        "You teach through conversation — practical, warm, and specific to Uganda–Japan business relations. "
+        "When teaching Luganda, include the phrase, meaning, and when to use it."
+    )
+
+
 VALID_EXPRESSIONS = ["neutral", "happy", "sad", "surprised", "thinking", "relaxed"]
 VALID_GESTURES = ["idle", "wave", "nod", "shake", "explain", "think", "shrug"]
+VALID_ANIMATIONS = ["idle", "talk", "explain", "wave", "think", "nod"]
 
 
 # ── Sentiment (fallback emotion when AI not available) ─────────────────────
@@ -275,14 +441,28 @@ async def translate_to_english(text: str) -> str:
 
 # ── Lip-sync / viseme timeline ─────────────────────────────────────────────
 VOWEL_VISEMES = {"a": "aa", "e": "ee", "i": "ih", "o": "oh", "u": "ou"}
+# First-letter consonant hints for slightly richer mouth shapes
+CONSONANT_VISEMES = {
+    "m": "ou", "p": "ou", "b": "ou", "w": "ou",
+    "f": "ih", "v": "ih",
+    "s": "ih", "z": "ih", "c": "ih",
+    "h": "aa", "k": "aa", "g": "aa",
+    "r": "oh", "l": "oh",
+    "t": "ee", "d": "ee", "n": "ee",
+}
 
 
 def word_to_viseme(word: str) -> str:
     if not word:
         return "sil"
-    for ch in word.lower():
+    w = word.lower().strip(".,!?;:\"'")
+    for ch in w:
         if ch in VOWEL_VISEMES:
             return VOWEL_VISEMES[ch]
+    if w:
+        first = w[0]
+        if first in CONSONANT_VISEMES:
+            return CONSONANT_VISEMES[first]
     return "aa"
 
 
@@ -308,22 +488,25 @@ async def generate_tts_with_visemes(text: str, voice: str, output_path: str) -> 
 # ── The brain: ask ChatGPT for a structured behavior ───────────────────────
 async def think(user_text: str, persona: dict, history: list) -> dict:
     """
-    Returns {reply, expression, gesture}. The reply is always English; the
-    backend translates it to Japanese afterwards.
+    Returns {reply, expression, gesture, animation}. The reply is always English.
     """
     if not ai_available():
+        beh = sentiment_behavior(user_text)
         return {
             "reply": f'(offline echo) "{user_text}". Set GROQ_API_KEY to enable the AI.',
-            **sentiment_behavior(user_text),
+            **beh,
+            "animation": beh.get("gesture", "explain"),
         }
 
     system = (
         f"{persona['system']}\n\n"
-        "You also direct a 3D avatar's body. Reply to the user, then choose one "
-        f"facial expression from {VALID_EXPRESSIONS} and one gesture from "
-        f"{VALID_GESTURES} that best fit your reply.\n"
-        'Output ONLY JSON: {"reply": "<english reply>", '
-        '"expression": "<expression>", "gesture": "<gesture>"}'
+        "You also direct a 3D avatar's body and face. Reply to the user, then choose:\n"
+        f"- expression from {VALID_EXPRESSIONS}\n"
+        f"- gesture from {VALID_GESTURES}\n"
+        f"- animation from {VALID_ANIMATIONS} (full-body clip; prefer 'explain' when teaching, "
+        "'wave' when greeting, 'think' when pondering, 'talk' when speaking at length)\n"
+        'Output ONLY JSON: {"reply": "<english>", "expression": "<expr>", '
+        '"gesture": "<gesture>", "animation": "<animation>"}'
     )
 
     messages = [{"role": "system", "content": system}]
@@ -336,15 +519,86 @@ async def think(user_text: str, persona: dict, history: list) -> dict:
         reply = data.get("reply", "").strip() or "..."
         expression = data.get("expression", "neutral")
         gesture = data.get("gesture", "explain")
+        animation = data.get("animation", gesture)
         if expression not in VALID_EXPRESSIONS:
             expression = "neutral"
         if gesture not in VALID_GESTURES:
             gesture = "explain"
-        return {"reply": reply, "expression": expression, "gesture": gesture}
+        if animation not in VALID_ANIMATIONS:
+            animation = gesture if gesture in VALID_ANIMATIONS else "explain"
+        return {
+            "reply": reply,
+            "expression": expression,
+            "gesture": gesture,
+            "animation": animation,
+        }
     except Exception as e:
         print(f"think() error: {e}")
-        return {"reply": "Sorry, I had trouble thinking just now.",
-                **sentiment_behavior(user_text)}
+        return {
+            "reply": "Sorry, I had trouble thinking just now.",
+            **sentiment_behavior(user_text),
+            "animation": "explain",
+        }
+
+
+# ── Live meeting rooms (WebRTC signaling) ─────────────────────────────────
+class MeetingPeer:
+    def __init__(self, peer_id: str, websocket: WebSocket, name: str, speak_lang: str, hear_lang: str):
+        self.peer_id = peer_id
+        self.websocket = websocket
+        self.name = name
+        self.speak_lang = speak_lang
+        self.hear_lang = hear_lang
+
+    def meta(self) -> dict:
+        return {
+            "peer_id": self.peer_id,
+            "name": self.name,
+            "speak_lang": self.speak_lang,
+            "hear_lang": self.hear_lang,
+        }
+
+
+class MeetingRoom:
+    def __init__(self, room_id: str):
+        self.room_id = room_id
+        self.peers: dict[str, MeetingPeer] = {}
+
+    def peer_list(self, exclude: str | None = None) -> list:
+        return [p.meta() for pid, p in self.peers.items() if pid != exclude]
+
+    async def broadcast(self, message: dict, exclude: str | None = None):
+        dead = []
+        for pid, peer in self.peers.items():
+            if exclude and pid == exclude:
+                continue
+            try:
+                await peer.websocket.send_json(message)
+            except Exception:
+                dead.append(pid)
+        for pid in dead:
+            self.peers.pop(pid, None)
+
+    async def send_to(self, peer_id: str, message: dict):
+        peer = self.peers.get(peer_id)
+        if not peer:
+            return
+        try:
+            await peer.websocket.send_json(message)
+        except Exception:
+            self.peers.pop(peer_id, None)
+
+
+_meeting_rooms: dict[str, MeetingRoom] = {}
+
+
+def _new_room_code() -> str:
+    chars = string.ascii_uppercase + string.digits
+    for _ in range(32):
+        code = "".join(random.choices(chars, k=6))
+        if code not in _meeting_rooms:
+            return code
+    return str(uuid.uuid4())[:6].upper()
 
 
 # ── App setup ──────────────────────────────────────────────────────────────
@@ -374,10 +628,11 @@ def next_audio_name(prefix: str) -> str:
 # ── Request models ─────────────────────────────────────────────────────────
 class AskRequest(BaseModel):
     text: str
-    persona: str = "Tutor"
+    persona: str = "FirstMeeting"
     character_name: str = None
     voice_en: str = None
     voice_ja: str = None
+    culture_mode: str = "uganda"  # uganda | japan | compare
 
 
 class TranslateRequest(BaseModel):
@@ -389,6 +644,41 @@ class VoiceRequest(BaseModel):
     text: str
     voice: str = "en-US"
     culture: str = "en"
+
+
+async def extract_upload_text(upload: UploadFile) -> str:
+    """Extract plain text from txt, md, csv, pdf, or docx uploads."""
+    raw = await upload.read()
+    fn = (upload.filename or "").lower()
+
+    if fn.endswith((".txt", ".md", ".csv")):
+        return raw.decode("utf-8", errors="ignore")
+
+    if fn.endswith(".pdf"):
+        try:
+            from io import BytesIO
+            from pypdf import PdfReader
+            reader = PdfReader(BytesIO(raw))
+            parts = []
+            for page in reader.pages[:40]:
+                parts.append(page.extract_text() or "")
+            return "\n".join(parts)
+        except Exception as e:
+            raise ValueError(f"Could not read PDF: {e}") from e
+
+    if fn.endswith(".docx"):
+        try:
+            from io import BytesIO
+            from docx import Document
+            doc = Document(BytesIO(raw))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except Exception as e:
+            raise ValueError(f"Could not read DOCX: {e}") from e
+
+    raise ValueError(
+        f"Unsupported file type for '{upload.filename}'. "
+        "Use .txt, .md, .csv, .pdf, or .docx"
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -408,13 +698,19 @@ async def ask_avatar(request: AskRequest):
     if not user_text:
         return JSONResponse({"error": "Empty input"}, status_code=400)
 
-    persona = PERSONAS.get(request.persona, PERSONAS["Tutor"])
+    scenario_key = resolve_scenario(request.persona)
+    persona = PERSONAS.get(scenario_key, PERSONAS["FirstMeeting"])
     character_name = (request.character_name or persona["name"]).strip() or persona["name"]
-    # The scenario (Tutor/Business/Casual) still drives personality, default
-    # background and voice — only the LLM's self-identification name changes,
-    # so whichever avatar is actually on screen is who it says it is, no
-    # matter which scenario you picked for it.
-    resolved_persona = {**persona, "system": persona["system_template"].format(name=character_name)}
+    culture_mode = (request.culture_mode or "uganda").strip().lower()
+    if culture_mode not in CULTURE_MODE_HINTS:
+        culture_mode = "uganda"
+
+    resolved_persona = {
+        **persona,
+        "system": build_character_system(
+            character_name, persona, culture_mode, user_text, scenario_key
+        ),
+    }
 
     # Normalize input to English for the brain.
     user_for_ai = user_text
@@ -461,11 +757,14 @@ async def ask_avatar(request: AskRequest):
 
         "expression": behavior["expression"],
         "gesture": behavior["gesture"],
+        "animation": behavior.get("animation", behavior["gesture"]),
         "emotion": behavior["expression"],
 
         "voice": ja_voice_name if primary == "ja" else en_voice_name,
         "background": persona["background"],
         "primary": primary,
+        "culture_mode": culture_mode,
+        "scenario": scenario_key,
 
         "audio_url_en": f"/static/{en_name}",
         "audio_url_ja": f"/static/{ja_name}",
@@ -478,9 +777,45 @@ async def ask_avatar(request: AskRequest):
         "behavior": {
             "expression": behavior["expression"],
             "gesture": behavior["gesture"],
+            "animation": behavior.get("animation", behavior["gesture"]),
             "background": persona["background"],
         },
     }
+
+
+@app.post("/analyze-file")
+async def analyze_file(
+    file: UploadFile = File(...),
+    persona: str = Form("FirstMeeting"),
+    character_name: str = Form(None),
+    voice_en: str = Form(None),
+    voice_ja: str = Form(None),
+    culture_mode: str = Form("uganda"),
+):
+    """Upload a document; avatar analyzes and responds with voice + motion."""
+    try:
+        doc_text = (await extract_upload_text(file)).strip()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    if not doc_text:
+        return JSONResponse({"error": "No readable text found in file."}, status_code=400)
+
+    prompt = (
+        f'I uploaded a file named "{file.filename}". Summarize the important points '
+        f"and explain anything relevant for Uganda–Japan business or cultural learning. "
+        f"If the document is not about culture, still give a clear helpful summary.\n\n"
+        f"--- DOCUMENT START ---\n{doc_text[:12000]}\n--- DOCUMENT END ---"
+    )
+
+    return await ask_avatar(AskRequest(
+        text=prompt,
+        persona=persona,
+        character_name=character_name,
+        voice_en=voice_en,
+        voice_ja=voice_ja,
+        culture_mode=culture_mode,
+    ))
 
 
 @app.post("/translate")
@@ -526,6 +861,16 @@ async def upload_face(photo: UploadFile = File(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/culture/summary")
+def culture_summary():
+    """Lightweight culture metadata for the frontend."""
+    return {
+        "modes": list(CULTURE_MODE_HINTS.keys()),
+        "scenarios": list(PERSONAS.keys()),
+        "characters": list(get_characters().keys()),
+    }
+
+
 @app.post("/reset")
 async def reset_conversation():
     conversation_history.clear()
@@ -535,3 +880,117 @@ async def reset_conversation():
 @app.get("/voices")
 async def list_voices():
     return {"catalog": VOICE_CATALOG, "default_en": EN_VOICE, "default_ja": JA_VOICE}
+
+
+@app.get("/meeting/create")
+def create_meeting_room():
+    """Create a short room code for live meetings."""
+    code = _new_room_code()
+    _meeting_rooms[code] = MeetingRoom(code)
+    return {"room_id": code}
+
+
+@app.get("/meeting/{room_id}/status")
+def meeting_room_status(room_id: str):
+    room = _meeting_rooms.get(room_id.upper())
+    if not room:
+        return {"exists": False, "participants": 0}
+    return {"exists": True, "participants": len(room.peers)}
+
+
+@app.websocket("/ws/meeting/{room_id}")
+async def meeting_websocket(websocket: WebSocket, room_id: str):
+    room_id = room_id.upper()
+    room = _meeting_rooms.get(room_id)
+    if not room:
+        room = MeetingRoom(room_id)
+        _meeting_rooms[room_id] = room
+
+    await websocket.accept()
+    peer_id = str(uuid.uuid4())
+    peer: MeetingPeer | None = None
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "join":
+                name = (data.get("name") or "Guest").strip()[:40] or "Guest"
+                speak_lang = (data.get("speak_lang") or "en").strip().lower()
+                hear_lang = (data.get("hear_lang") or "ja").strip().lower()
+                peer = MeetingPeer(peer_id, websocket, name, speak_lang, hear_lang)
+                room.peers[peer_id] = peer
+
+                await websocket.send_json({
+                    "type": "joined",
+                    "peer_id": peer_id,
+                    "room_id": room_id,
+                    "peers": room.peer_list(exclude=peer_id),
+                })
+                await room.broadcast({
+                    "type": "peer-joined",
+                    "peer": peer.meta(),
+                }, exclude=peer_id)
+                continue
+
+            if not peer:
+                await websocket.send_json({"type": "error", "message": "Send join first"})
+                continue
+
+            if msg_type in ("offer", "answer", "ice"):
+                target = data.get("to")
+                if not target:
+                    continue
+                payload = {
+                    "type": msg_type,
+                    "from": peer_id,
+                    "to": target,
+                }
+                if msg_type == "ice":
+                    payload["candidate"] = data.get("candidate")
+                else:
+                    payload["sdp"] = data.get("sdp")
+                await room.send_to(target, payload)
+                continue
+
+            if msg_type == "transcript":
+                text = (data.get("text") or "").strip()
+                if not text:
+                    continue
+                await room.broadcast({
+                    "type": "transcript",
+                    "from": peer_id,
+                    "name": peer.name,
+                    "text": text,
+                    "lang": data.get("lang") or peer.speak_lang,
+                    "final": bool(data.get("final", True)),
+                }, exclude=peer_id)
+                continue
+
+            if msg_type == "chat":
+                text = (data.get("text") or "").strip()
+                if not text:
+                    continue
+                await room.broadcast({
+                    "type": "chat",
+                    "from": peer_id,
+                    "name": peer.name,
+                    "text": text,
+                    "lang": data.get("lang") or peer.speak_lang,
+                })
+                continue
+
+            if msg_type == "leave":
+                break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"Meeting WS error ({room_id}): {e}")
+    finally:
+        if peer and peer_id in room.peers:
+            room.peers.pop(peer_id, None)
+            await room.broadcast({"type": "peer-left", "peer_id": peer_id})
+        if not room.peers:
+            _meeting_rooms.pop(room_id, None)

@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "title": "Uganda Cultural & Business Knowledge",
+    "disclaimer": "General cultural guidance only. For legal, tax, visa, or investment decisions, consult qualified professionals in Uganda."
+  },
+  "topics": {
+    "greetings": {
+      "keywords": ["greet", "hello", "handshake", "introduction", "meet", "elder", "respect", "oli otya", "wasuze"],
+      "facts": [
+        "In Uganda, greet everyone in the room individually before starting business — skipping someone can cause offence.",
+        "Greet elders and senior people first; this signals respect.",
+        "Handshakes are common; grip is often warm and may last slightly longer than in Japan. In some regions a gentle grip with both hands when receiving something shows respect.",
+        "Small talk about health, family, or the journey is normal and builds trust before business.",
+        "Rushing straight to contracts in a first meeting often feels too direct.",
+        "Use titles (Mr., Mrs., Dr., Madam) until invited to use first names.",
+        "Basic Luganda greeting: 'Oli otya?' (How are you?) — response often 'Bulungi' (Fine/Good). Morning: 'Wasuze otya nno?'"
+      ]
+    },
+    "business_etiquette": {
+      "keywords": ["business", "meeting", "office", "kampala", "partner", "trust", "relationship", "contract"],
+      "facts": [
+        "Ugandan business culture is relationship-first: trust and personal connection often come before formal agreements.",
+        "Decisions may involve consultation with elders, partners, or family — silence does not always mean agreement; clarify gently.",
+        "Punctuality is appreciated, but meetings may start later than scheduled ('African time') — build buffer time and avoid showing frustration.",
+        "Accept tea, coffee, or soda when offered — refusing can feel impolite.",
+        "Use both hands when giving or receiving a business card or gift.",
+        "Ask about someone's family or well-being — it shows you care about them as a person, not only as a deal.",
+        "Do not discuss detailed investment figures in a very first meeting unless the relationship is already warm."
+      ]
+    },
+    "negotiation": {
+      "keywords": ["negotiate", "deal", "price", "contract", "agreement", "silence", "decision"],
+      "facts": [
+        "Negotiations often move slowly because relationship-building is part of the process.",
+        "A verbal commitment backed by trust can matter as much as paper in early stages.",
+        "Silence in a meeting may mean disagreement, thinking, or discomfort — ask open questions rather than assuming agreement.",
+        "Community or senior approval may be needed before a final yes.",
+        "Face-saving matters: give partners room to reconsider without public embarrassment."
+      ]
+    },
+    "food_social": {
+      "keywords": ["food", "meal", "matooke", "rolex", "eat", "restaurant", "home", "visit", "drink"],
+      "facts": [
+        "Sharing a meal is an important bonding ritual in Ugandan business and social life.",
+        "Matooke (steamed green bananas) and Rolex (chapati egg roll) are widely known local foods.",
+        "Washing hands before eating is common, especially when sharing dishes.",
+        "Refusing food repeatedly can seem rude — a polite small portion is often better than a flat refusal.",
+        "Accepting offered drinks (tea, soda, water) is a sign of goodwill."
+      ]
+    },
+    "market": {
+      "keywords": ["market", "owino", "bargain", "shop", "price", "buy"],
+      "facts": [
+        "Markets like Owino (St. Balikuddembe) in Kampala are lively and bargaining is expected.",
+        "Friendly negotiation is normal — stay respectful, not aggressive.",
+        "Building rapport with a seller can get better prices than demanding discounts immediately.",
+        "Carry small cash; mobile money is also widely used across Uganda."
+      ]
+    },
+    "investment": {
+      "keywords": ["invest", "sector", "company", "register", "tax", "land", "ticad", "opportunity", "mobile money"],
+      "facts": [
+        "Key sectors for foreign interest include agriculture, ICT, energy, tourism, and minerals — verify current policy with official sources.",
+        "Mobile money is deeply embedded: tens of millions of accounts; many daily transactions happen via phone.",
+        "Currency is Ugandan Shilling (UGX).",
+        "Land ownership rules for foreigners are restricted — always use qualified legal counsel before any land deal.",
+        "Japan–Africa cooperation includes TICAD; check current JICA and Uganda Investment Authority guidance for incentives.",
+        "Company registration and tax rules change — direct investors to URSB, URA, and Uganda Investment Authority for official steps."
+      ]
+    },
+    "pretrip": {
+      "keywords": ["visa", "travel", "fly", "pack", "health", "vaccination", "airport", "trip", "prepare"],
+      "facts": [
+        "Japanese nationals should verify current Uganda visa requirements with the Embassy of Uganda in Tokyo before travel.",
+        "Yellow fever vaccination may be required — check latest health advisories.",
+        "Business attire in Kampala meetings is often formal (suit or smart business wear).",
+        "Learn a few Luganda greetings before arrival — locals appreciate the effort.",
+        "Carry some USD or EUR for exchange; mobile money setup may require a local SIM for some services.",
+        "On day one: greet warmly, be patient with timing, and avoid criticizing local customs openly."
+      ]
+    },
+    "mistakes": {
+      "keywords": ["mistake", "avoid", "wrong", "rude", "offend", "don't"],
+      "facts": [
+        "Avoid pointing at people with one finger — use an open hand.",
+        "Do not show the sole of your foot toward someone in formal settings.",
+        "Avoid ignoring elders or senior people in a group.",
+        "Do not interpret lateness as disrespect without context.",
+        "Avoid being overly transactional in first meetings."
+      ]
+    }
+  }
+}

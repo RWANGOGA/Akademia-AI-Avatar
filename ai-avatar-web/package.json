@@ -15,6 +15,7 @@
     "@pixiv/three-vrm": "^3.5.4",
     "lucide": "^1.20.0",
     "three": "^0.184.0",
-    "three-stdlib": "^2.36.1"
+    "three-stdlib": "^2.36.1",
+    "vrm-mixamo-retarget": "^1.0.3"
   }
 }

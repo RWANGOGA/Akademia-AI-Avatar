@@ -1,0 +1,55 @@
+{
+  "meta": {
+    "title": "Japan Cultural & Business Knowledge",
+    "disclaimer": "General cultural guidance for Ugandan partners preparing to work with Japanese investors."
+  },
+  "topics": {
+    "greetings": {
+      "keywords": ["greet", "hello", "bow", "meishi", "business card", "introduction", "konichiwa"],
+      "facts": [
+        "Bowing is a standard greeting; depth reflects respect level.",
+        "Business cards (meishi) are exchanged with both hands and a slight bow — treat the card respectfully, do not write on it in front of the giver.",
+        "Use family name + san (e.g., Tanaka-san) until invited to use given names.",
+        "A quiet, respectful tone is valued in first meetings."
+      ]
+    },
+    "business_etiquette": {
+      "keywords": ["business", "meeting", "office", "tokyo", "hierarchy", "punctual"],
+      "facts": [
+        "Punctuality is highly valued — arriving 5–10 minutes early is normal.",
+        "Hierarchy matters: senior person often speaks first or sits in the place of honour.",
+        "Meetings follow structure: agenda, detailed materials, and careful note-taking.",
+        "Silence often means thoughtful consideration, not necessarily disagreement.",
+        "Decisions may take time due to internal consensus (nemawashi) — patience is expected."
+      ]
+    },
+    "negotiation": {
+      "keywords": ["negotiate", "deal", "contract", "yes", "agreement", "decision"],
+      "facts": [
+        "'Hai' (yes) often means 'I hear you' rather than 'I agree' — confirm understanding explicitly.",
+        "Written proposals with detail and data are respected.",
+        "Long decision cycles reflect internal alignment, not lack of interest.",
+        "Avoid putting a Japanese partner on the spot for an immediate public decision."
+      ]
+    },
+    "communication": {
+      "keywords": ["communicate", "direct", "indirect", "honest", "face", "silence"],
+      "facts": [
+        "Communication can be indirect; read context and tone, not only words.",
+        "Preserving harmony (wa) is important — direct confrontation in groups is often avoided.",
+        "Written follow-up emails summarizing agreed points are appreciated.",
+        "Gift-giving is common but follows etiquette — modest, well-wrapped gifts are appropriate."
+      ]
+    },
+    "for_ugandan_partners": {
+      "keywords": ["uganda", "partner", "japanese investor", "prepare", "proposal"],
+      "facts": [
+        "Prepare detailed written materials — Japanese companies often expect thorough documentation.",
+        "Respect punctuality and send materials in advance when possible.",
+        "Understand that a slow response may mean internal review, not rejection.",
+        "Gifts from Uganda (coffee, crafts) can be meaningful if presented modestly and with context.",
+        "Explain Ugandan relationship-building norms gently — many Japanese investors are learning too."
+      ]
+    }
+  }
+}
