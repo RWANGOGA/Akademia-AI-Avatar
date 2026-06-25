@@ -46,10 +46,30 @@ app.add_middleware(
 )
 
 os.makedirs("static", exist_ok=True)
+os.makedirs("uploads", exist_ok=True) # Create uploads folder for files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ==========================================
-# 4. REQUEST MODELS
+# 4. HELPER FUNCTIONS
+# ==========================================
+def get_or_create_guest_user(db):
+    """Creates a default guest user so we can save sessions/documents before auth is built."""
+    guest = db.query(models.User).filter_by(id=1).first()
+    if not guest:
+        guest = models.User(
+            id=1,
+            email="guest@akademia.local",
+            name="Guest",
+            hashed_password="none",
+            is_active=True
+        )
+        db.add(guest)
+        db.commit()
+        db.refresh(guest)
+    return guest
+
+# ==========================================
+# 5. REQUEST MODELS
 # ==========================================
 class AskRequest(BaseModel):
     text: str
@@ -60,7 +80,7 @@ class AskRequest(BaseModel):
     culture_mode: str = "uganda"
 
 # ==========================================
-# 5. ENDPOINTS
+# 6. ENDPOINTS
 # ==========================================
 @app.get("/health")
 def health():
@@ -94,19 +114,9 @@ async def ask_avatar(request: AskRequest):
     if DB_AVAILABLE:
         db = SessionLocal()
         try:
-            # Get or create a guest user until auth is implemented
-            guest = db.query(models.User).filter_by(id=1).first()
-            if not guest:
-                guest = models.User(
-                    email="guest@akademia.local",
-                    name="Guest",
-                    hashed_password="none",
-                    is_active=True
-                )
-                db.add(guest)
-                db.commit()
-                db.refresh(guest)
-
+            # Get or create guest user
+            guest = get_or_create_guest_user(db)
+            
             # Create a session
             chat_session = crud.create_session(db, user_id=guest.id, persona=request.persona, culture_mode=request.culture_mode)
             
@@ -165,7 +175,6 @@ async def ask_avatar(request: AskRequest):
     # SCENARIO B: DATABASE IS OFF (Fallback Mode)
     # ==========================================
     else:
-        # Use the last 8 messages for context
         history = fallback_conversation_history[-8:]
         
         behavior = await think(user_for_ai, system_prompt, history)
@@ -185,7 +194,6 @@ async def ask_avatar(request: AskRequest):
         visemes_en = await generate_tts_with_visemes(reply_en, en_voice, os.path.join("static", en_name))
         visemes_ja = await generate_tts_with_visemes(reply_ja, ja_voice, os.path.join("static", ja_name))
 
-        # Save to temporary list
         fallback_conversation_history.append({"role": "user", "content": user_for_ai})
         fallback_conversation_history.append({"role": "assistant", "content": reply_en})
 
@@ -213,6 +221,7 @@ async def analyze_file(
     fn = (file.filename or "").lower()
     doc_text = ""
     
+    # 1. Extract text from file
     if fn.endswith((".txt", ".md", ".csv")):
         doc_text = raw.decode("utf-8", errors="ignore")
     elif fn.endswith(".pdf"):
@@ -234,8 +243,32 @@ async def analyze_file(
     
     if not doc_text:
         return JSONResponse({"error": "No readable text found in file."}, status_code=400)
+
+    # 2. Save the actual file to the server's 'uploads' folder
+    file_location = f"uploads/{file.filename}"
+    with open(file_location, "wb") as f:
+        f.write(raw)
     
+    # 3. Save document metadata and text to the Database
+    if DB_AVAILABLE:
+        db = SessionLocal()
+        try:
+            guest = get_or_create_guest_user(db)
+            crud.save_document(
+                db=db,
+                user_id=guest.id,
+                filename=file.filename or "uploaded_file",
+                file_path=file_location,
+                extracted_text=doc_text[:50000], # Limit to 50k chars
+                file_type=fn.split('.')[-1] if '.' in fn else "txt"
+            )
+            print(f"✅ Document saved to database and disk: {file.filename}")
+        finally:
+            db.close()
+
+    # 4. Ask the AI about the document
     prompt = f'I uploaded a file named "{file.filename}". Summarize the important points and explain anything relevant for cultural learning.\n\n--- DOCUMENT START ---\n{doc_text[:8000]}\n--- DOCUMENT END ---'
+    
     # This automatically uses the updated /ask logic (DB or Fallback)!
     return await ask_avatar(AskRequest(text=prompt, persona=persona, culture_mode=culture_mode))
 
@@ -251,7 +284,6 @@ async def translate_text(text: str = Form(...), target: str = Form("ja")):
 def reset_conversation():
     """Clear conversation history."""
     if DB_AVAILABLE:
-        # In the future, we will archive the DB session here.
         return {"status": "cleared", "mode": "database"}
     else:
         fallback_conversation_history.clear()
@@ -295,4 +327,3 @@ def meeting_room_status(room_id: str):
 async def meeting_websocket(websocket: WebSocket, room_id: str):
     """WebSocket endpoint for live meetings."""
     await handle_meeting_websocket(websocket, room_id)
-    
