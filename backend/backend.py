@@ -32,7 +32,7 @@ fallback_conversation_history = []
 from ai import ai_available, GROQ_MODEL, resolve_voice, generate_tts_with_visemes, think
 from translation import translate_to_japanese, translate_to_english, is_japanese
 from culture import PERSONAS, resolve_scenario, build_character_system, get_characters, CULTURE_MODE_HINTS
-from meeting import handle_meeting_websocket, _meeting_rooms, _new_room_code, MeetingRoom
+from meeting import handle_meeting_websocket, _meeting_rooms, _new_room_code, MeetingRoom, voice_tts_handler
 
 # ==========================================
 # 3. APP SETUP
@@ -46,7 +46,7 @@ app.add_middleware(
 )
 
 os.makedirs("static", exist_ok=True)
-os.makedirs("uploads", exist_ok=True) # Create uploads folder for files
+os.makedirs("uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ==========================================
@@ -169,7 +169,7 @@ async def ask_avatar(request: AskRequest):
                 "mode": "database"
             }
         finally:
-            db.close() # Always close the DB connection!
+            db.close()
 
     # ==========================================
     # SCENARIO B: DATABASE IS OFF (Fallback Mode)
@@ -259,7 +259,7 @@ async def analyze_file(
                 user_id=guest.id,
                 filename=file.filename or "uploaded_file",
                 file_path=file_location,
-                extracted_text=doc_text[:50000], # Limit to 50k chars
+                extracted_text=doc_text[:50000],
                 file_type=fn.split('.')[-1] if '.' in fn else "txt"
             )
             print(f"✅ Document saved to database and disk: {file.filename}")
@@ -268,8 +268,6 @@ async def analyze_file(
 
     # 4. Ask the AI about the document
     prompt = f'I uploaded a file named "{file.filename}". Summarize the important points and explain anything relevant for cultural learning.\n\n--- DOCUMENT START ---\n{doc_text[:8000]}\n--- DOCUMENT END ---'
-    
-    # This automatically uses the updated /ask logic (DB or Fallback)!
     return await ask_avatar(AskRequest(text=prompt, persona=persona, culture_mode=culture_mode))
 
 @app.post("/translate")
@@ -307,6 +305,23 @@ def culture_summary():
         "scenarios": list(PERSONAS.keys()),
         "characters": list(get_characters().keys())
     }
+
+# ==========================================
+# LIVE MEETING ENDPOINTS
+# ==========================================
+@app.post("/voice")
+async def live_voice(
+    text: str = Form(...),
+    voice: str = Form("en-US"),
+    culture: str = Form("en")
+):
+    """
+    Fast TTS for the live meeting avatar interpreter.
+    No LLM involved — pure Edge-TTS audio + viseme timeline.
+    Called by LiveMeetingSystem._callVoice() on every speech chunk.
+    Returns: { audio_url: str, visemes: list }
+    """
+    return await voice_tts_handler(text, voice, culture)
 
 @app.get("/meeting/create")
 def create_meeting_room():
