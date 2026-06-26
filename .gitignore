@@ -16,3 +16,8 @@ static/face_upload.*
 
 # OS
 .DS_Store
+static/
+uploads/
+__pycache__/
+.env
+venv/
