@@ -3,6 +3,7 @@ import random
 import string
 import hashlib
 import os
+import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 
 # ── Peer & Room models ────────────────────────────────────────────────────────
@@ -67,9 +68,7 @@ def _new_room_code() -> str:
     return str(uuid.uuid4())[:6].upper()
 
 
-# ── /voice endpoint helper ────────────────────────────────────────────────────
-# Called by backend.py as:  from meeting import voice_tts_handler
-# Kept here so all live-meeting code stays in meeting.py.
+# ── Voice map ─────────────────────────────────────────────────────────────────
 
 VOICE_MAP = {
     "en":      "en-US-JennyNeural",
@@ -84,35 +83,121 @@ VOICE_MAP = {
     "luganda": "en-US-JennyNeural",
 }
 
+# ── Safe TTS wrapper (stays in meeting.py) ────────────────────────────────────
+
+async def _safe_tts(text: str, voice: str, audio_path: str) -> list:
+    """
+    Call generate_tts_with_visemes with:
+      1. Empty text guard  — returns [] instead of crashing Edge-TTS
+      2. Retry on failure  — waits and retries up to 3 times
+      3. Fallback          — returns [] on total failure, never raises 500
+    """
+    from ai import generate_tts_with_visemes
+
+    # Guard: Edge-TTS crashes on empty or placeholder text
+    clean = (text or "").strip()
+    if not clean or clean in ("...", "…", ".", ""):
+        print("⚠️  TTS skipped — empty or placeholder text")
+        return []
+
+    for attempt in range(3):
+        try:
+            visemes = await generate_tts_with_visemes(clean, voice, audio_path)
+            return visemes
+        except Exception as e:
+            err = str(e)
+            if "NoAudioReceived" in err or "no audio" in err.lower():
+                # Edge-TTS got bad parameters — don't retry, just skip
+                print(f"⚠️  TTS NoAudioReceived for voice={voice} — skipping")
+                return []
+            if "429" in err or "rate_limit" in err.lower():
+                wait = (attempt + 1) * 4   # 4s, 8s, 12s
+                print(f"⏳ TTS rate limit — waiting {wait}s (attempt {attempt+1}/3)")
+                await asyncio.sleep(wait)
+            else:
+                # Unknown error — wait briefly and retry once
+                print(f"⚠️  TTS error (attempt {attempt+1}/3): {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+
+    print("⚠️  TTS failed after 3 attempts — returning empty visemes")
+    return []
+
+
+# ── /voice endpoint handler ───────────────────────────────────────────────────
+# Imported by backend.py: from meeting import voice_tts_handler
 
 async def voice_tts_handler(text: str, voice: str, culture: str) -> dict:
     """
-    Generate TTS audio + viseme timeline for the avatar interpreter.
+    Fast TTS for the live meeting avatar interpreter.
     Returns { audio_url: str, visemes: list }.
-    Imported and used by backend.py for the POST /voice endpoint.
-    Keeps all meeting-related logic inside meeting.py.
+    Uses _safe_tts so it never returns a 500 error.
     """
-    # Import here to avoid circular imports — ai.py is a peer module
-    from ai import generate_tts_with_visemes
-
     # Resolve voice name
     resolved_voice = VOICE_MAP.get(voice) or VOICE_MAP.get(culture) or "en-US-JennyNeural"
     if voice and voice.endswith("Neural"):
-        resolved_voice = voice  # full neural name passed directly
+        resolved_voice = voice
 
-    # Build a unique filename from text + voice so identical requests reuse cache
+    # Unique filename — same text+voice reuses cached file
     text_hash  = hashlib.md5(f"{text}:{resolved_voice}".encode()).hexdigest()[:12]
     audio_name = f"live_{text_hash}.mp3"
 
     os.makedirs("static", exist_ok=True)
     audio_path = os.path.join("static", audio_name)
 
-    visemes = await generate_tts_with_visemes(text, resolved_voice, audio_path)
+    # Use cached file if it already exists
+    if os.path.exists(audio_path):
+        from ai import generate_tts_with_visemes as _gtv
+        # Rebuild visemes from cache is not possible without re-streaming,
+        # so we re-generate only if file is missing. If cached, return empty
+        # visemes (avatar still plays audio, just no lip sync from cache).
+        return {
+            "audio_url": f"/static/{audio_name}",
+            "visemes":   [],
+        }
+
+    visemes = await _safe_tts(text, resolved_voice, audio_path)
 
     return {
         "audio_url": f"/static/{audio_name}",
         "visemes":   visemes,
     }
+
+
+# ── Groq translate with retry (stays in meeting.py) ───────────────────────────
+
+async def _meeting_translate(text: str, target_lang: str, backend_url: str = "http://localhost:8000") -> str:
+    """
+    Translate text via the /translate endpoint with retry on 429.
+    Used only inside the WebSocket handler for server-side translation.
+    """
+    if not text or not text.strip():
+        return text
+
+    import httpx
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{backend_url}/translate",
+                    data={"text": text, "target": target_lang}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("text") or text
+                if resp.status_code == 429:
+                    wait = (attempt + 1) * 3
+                    print(f"⏳ Translate 429 — waiting {wait}s")
+                    await asyncio.sleep(wait)
+                else:
+                    return text
+        except Exception as e:
+            print(f"⚠️  Translate error (attempt {attempt+1}/3): {e}")
+            if attempt < 2:
+                await asyncio.sleep(2)
+
+    return text  # fallback: return original if all retries fail
 
 
 # ── WebSocket handler ─────────────────────────────────────────────────────────
@@ -131,12 +216,12 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
       leave       — clean disconnect
 
     Message types sent to clients:
-      joined      — confirmation with peer_id + current peer list
-      peer-joined — new participant metadata
-      peer-left   — departed peer_id
+      joined       — confirmation with peer_id + current peer list
+      peer-joined  — new participant metadata
+      peer-left    — departed peer_id
       offer / answer / ice — relayed WebRTC payloads
-      transcript  — relayed spoken chunk with speaker name + lang
-      chat        — relayed typed message
+      transcript   — relayed spoken chunk with speaker name + lang
+      chat         — relayed typed message with per-peer translation
     """
     room_id = room_id.upper()
 
@@ -165,7 +250,6 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
                 )
                 room.peers[peer_id] = peer
 
-                # Tell this peer their ID and who is already in the room
                 await websocket.send_json({
                     "type":    "joined",
                     "peer_id": peer_id,
@@ -173,13 +257,12 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
                     "peers":   room.peer_list(exclude=peer_id),
                 })
 
-                # Tell everyone else a new peer arrived
                 await room.broadcast(
                     {"type": "peer-joined", "peer": peer.meta()},
                     exclude=peer_id,
                 )
 
-            # ── WebRTC signaling: relay offer / answer / ICE ──────────────────
+            # ── WebRTC signaling ──────────────────────────────────────────────
             elif msg_type in ("offer", "answer", "ice") and peer:
                 target = data.get("to")
                 if not target:
@@ -198,6 +281,8 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
                 await room.send_to(target, payload)
 
             # ── Transcript chunk (spoken speech) ──────────────────────────────
+            # Broadcast as-is — each client translates to their own hearLang
+            # in LiveMeetingSystem.js using _callTranslate()
             elif msg_type == "transcript" and peer:
                 await room.broadcast(
                     {
@@ -211,19 +296,38 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
                     exclude=peer_id,
                 )
 
-            # ── Chat message (typed text) ──────────────────────────────────────
+            # ── Chat message ──────────────────────────────────────────────────
+            # Each receiving peer gets the original text + their own translation.
+            # Translation happens per-peer so everyone sees their hearLang.
             elif msg_type == "chat" and peer:
-                # Broadcast to ALL peers including sender so sender sees their
-                # own message in the chat strip styled correctly
-                await room.broadcast(
-                    {
-                        "type": "chat",
-                        "from": peer_id,
-                        "name": peer.name,
-                        "text": data.get("text", ""),
-                        "lang": data.get("lang", peer.speak_lang),
-                    }
-                )
+                original  = data.get("text", "")
+                src_lang  = data.get("lang", peer.speak_lang)
+
+                # Send to each peer individually with their own translation
+                for pid, receiving_peer in list(room.peers.items()):
+                    translated = original  # default: no translation
+
+                    # Only translate if languages differ
+                    if receiving_peer.hear_lang != src_lang and original.strip():
+                        try:
+                            translated = await _meeting_translate(
+                                original, receiving_peer.hear_lang
+                            )
+                        except Exception:
+                            translated = original  # safe fallback
+
+                    try:
+                        await receiving_peer.websocket.send_json({
+                            "type":       "chat",
+                            "from":       peer_id,
+                            "name":       peer.name,
+                            "text":       original,
+                            "translated": translated,
+                            "lang":       src_lang,
+                            "hear_lang":  receiving_peer.hear_lang,
+                        })
+                    except Exception:
+                        room.peers.pop(pid, None)
 
             # ── Leave ─────────────────────────────────────────────────────────
             elif msg_type == "leave":
@@ -234,11 +338,9 @@ async def handle_meeting_websocket(websocket: WebSocket, room_id: str):
     except Exception as e:
         print(f"Meeting WebSocket error ({room_id}): {e}")
     finally:
-        # Clean up peer on any exit path
         if peer and peer_id in room.peers:
             room.peers.pop(peer_id, None)
             await room.broadcast({"type": "peer-left", "peer_id": peer_id})
 
-        # Delete the room when it is empty
         if not room.peers:
             _meeting_rooms.pop(room_id, None)
